@@ -92,7 +92,9 @@ Typed examples:
 - `unity-cli instances list`
 - `unity-cli instances set-active --name "<instance>"`
 - `unity-cli tool list`
+- `unity-cli tool schema <tool_name> --output json`
 - `unity-cli tool call <tool_name> --json '{...}'`
+- `unity-cli --dry-run tool call <tool_name> --json '{...}'`
 - `unity-cli unityd start` / `stop` / `status`
 - `unity-cli batch --json '[{"tool":"ping","params":{}},{"tool":"get_editor_state","params":{}}]'`
 
@@ -101,6 +103,11 @@ Raw example:
 ```bash
 unity-cli raw create_gameobject --json '{"name":"Player"}'
 ```
+
+Parameter validation is strict by default for tools with explicit schemas.
+Unknown keys, missing required fields, and type mismatches are rejected before execution.
+`oneOf` / `anyOf` constraints are also enforced (e.g. `load_scene`, `delete_gameobject`, `input_keyboard`).
+For action-based tools, required fields are validated per action variant (e.g. `package_manager` search requires `keyword`, `manage_layers` add requires `layerName`).
 
 Local (Rust-side) tools that do not require Unity TCP roundtrip:
 
@@ -552,7 +559,9 @@ typed 例:
 - `unity-cli instances list`
 - `unity-cli instances set-active --name "<instance>"`
 - `unity-cli tool list`
+- `unity-cli tool schema <tool_name> --output json`
 - `unity-cli tool call <tool_name> --json '{...}'`
+- `unity-cli --dry-run tool call <tool_name> --json '{...}'`
 - `unity-cli unityd start` / `stop` / `status`
 - `unity-cli batch --json '[{"tool":"ping","params":{}},{"tool":"get_editor_state","params":{}}]'`
 
@@ -561,6 +570,11 @@ raw 例:
 ```bash
 unity-cli raw create_gameobject --json '{"name":"Player"}'
 ```
+
+明示スキーマを持つツールはデフォルトで厳格バリデーションされます。
+未知キー、必須不足、型不一致は実行前にエラーになります。
+`oneOf` / `anyOf` 制約（例: `load_scene`, `delete_gameobject`, `input_keyboard`）も実行前に検証されます。
+action 付きツールは action ごとの必須項目も実行前に検証されます（例: `package_manager` の search では `keyword` 必須、`manage_layers` の add では `layerName` 必須）。
 
 Unity TCP を介さずローカル実行される Rust 側ツール:
 

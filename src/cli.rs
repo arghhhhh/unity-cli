@@ -32,6 +32,9 @@ pub struct Cli {
     #[arg(short, long, global = true, action = ArgAction::Count)]
     pub verbose: u8,
 
+    #[arg(long, global = true)]
+    pub dry_run: bool,
+
     #[command(subcommand)]
     pub command: Command,
 }
@@ -78,6 +81,9 @@ pub enum Command {
 #[derive(Debug, Subcommand)]
 pub enum ToolCommand {
     List,
+    Schema {
+        tool_name: Option<String>,
+    },
     Call(RawArgs),
     #[command(external_subcommand)]
     External(Vec<String>),

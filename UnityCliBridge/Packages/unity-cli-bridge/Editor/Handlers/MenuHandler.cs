@@ -80,20 +80,18 @@ namespace UnityCliBridge.Handlers
                 bool safetyCheck = parameters["safetyCheck"]?.ToObject<bool>() ?? true;
                 JObject menuParameters = parameters["parameters"] as JObject;
 
-                // Validate menu path
-                if (string.IsNullOrWhiteSpace(menuPath))
-                {
-                    return new
-                    {
-                        success = false,
-                        error = "menuPath is required"
-                    };
-                }
-
                 // Handle different actions
                 switch (action)
                 {
                     case "execute":
+                        if (string.IsNullOrWhiteSpace(menuPath))
+                        {
+                            return new
+                            {
+                                success = false,
+                                error = "menuPath is required"
+                            };
+                        }
                         return ExecuteMenuAction(menuPath, alias, safetyCheck, menuParameters);
                     
                     case "get_available_menus":

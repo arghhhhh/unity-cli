@@ -25,7 +25,7 @@ use crate::cli::{
 };
 use crate::config::RuntimeConfig;
 use crate::instances::{list_instances, set_active_instance};
-use crate::tool_catalog::{is_known_tool, TOOL_NAMES};
+use crate::tool_catalog::{get_tool_spec, is_known_tool, list_tool_specs, TOOL_NAMES};
 use crate::transport::UnityClient;
 
 #[tokio::main]
@@ -58,6 +58,22 @@ async fn run_with_cli(cli: Cli) -> Result<()> {
                         println!("{name}");
                     }
                 }
+            }
+            ToolCommand::Schema { tool_name } => {
+                let value = if let Some(name) = tool_name {
+                    let spec = get_tool_spec(name).ok_or_else(|| {
+                        anyhow!(
+                            "Unknown tool `{}`. Use `unity-cli tool list` to see supported names.",
+                            name
+                        )
+                    })?;
+                    serde_json::to_value(spec)?
+                } else {
+                    json!({
+                        "tools": list_tool_specs()
+                    })
+                };
+                print_value(&value, cli.output)?;
             }
             ToolCommand::Call(args) => {
                 let value = execute_raw(&cli, args).await?;
@@ -201,6 +217,18 @@ async fn execute_raw(cli: &Cli, args: &RawArgs) -> Result<Value> {
 }
 
 async fn execute_tool(cli: &Cli, tool_name: &str, params: Value) -> Result<Value> {
+    validate_tool_params(tool_name, &params)?;
+
+    if should_skip_for_dry_run(cli, tool_name) {
+        return Ok(json!({
+            "dryRun": true,
+            "executed": false,
+            "tool": tool_name,
+            "reason": "mutating_tool_blocked_by_dry_run",
+            "params": params
+        }));
+    }
+
     if let Some(local_result) = local_tools::maybe_execute_local_tool(tool_name, &params) {
         return local_result;
     }
@@ -243,19 +271,48 @@ async fn execute_batch(cli: &Cli, json_str: Option<&str>, use_stdin: bool) -> Re
         return Ok(json!([]));
     }
 
-    let config = RuntimeConfig::from_cli(cli)?;
-
-    // Try daemon first.
-    match unityd::try_batch(commands, &config).await {
-        Ok(value) => Ok(value),
-        Err(error) if error.is_transport() => {
-            // Cannot retry easily since commands were moved; re-parse.
-            let commands2: Vec<unityd::BatchItem> = serde_json::from_str(&raw)
-                .context("Batch input must be a JSON array of {tool, params}")?;
-            execute_batch_direct(&config, commands2).await
-        }
-        Err(error) => Err(error.into()),
+    for item in &commands {
+        validate_tool_params(&item.tool, &item.params)
+            .with_context(|| format!("Batch command validation failed for tool `{}`", item.tool))?;
     }
+
+    if !cli.dry_run {
+        let config = RuntimeConfig::from_cli(cli)?;
+        match unityd::try_batch(commands, &config).await {
+            Ok(value) => return Ok(value),
+            Err(error) if error.is_transport() => {
+                let commands2: Vec<unityd::BatchItem> = serde_json::from_str(&raw)
+                    .context("Batch input must be a JSON array of {tool, params}")?;
+                return execute_batch_direct(&config, commands2).await;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+
+    let mut results = Vec::with_capacity(commands.len());
+    for item in commands {
+        if should_skip_for_dry_run(cli, &item.tool) {
+            results.push(json!({
+                "ok": true,
+                "skipped": true,
+                "result": {
+                    "dryRun": true,
+                    "executed": false,
+                    "tool": item.tool,
+                    "reason": "mutating_tool_blocked_by_dry_run",
+                    "params": item.params
+                }
+            }));
+            continue;
+        }
+
+        match execute_tool(cli, &item.tool, item.params).await {
+            Ok(value) => results.push(json!({ "ok": true, "result": value })),
+            Err(error) => results.push(json!({ "ok": false, "error": error.to_string() })),
+        }
+    }
+
+    Ok(Value::Array(results))
 }
 
 async fn execute_batch_direct(
@@ -278,6 +335,196 @@ async fn execute_batch_direct(
     }
 
     Ok(Value::Array(results))
+}
+
+fn should_skip_for_dry_run(cli: &Cli, tool_name: &str) -> bool {
+    if !cli.dry_run {
+        return false;
+    }
+    get_tool_spec(tool_name)
+        .map(|spec| spec.mutating)
+        .unwrap_or(false)
+}
+
+fn validate_tool_params(tool_name: &str, params: &Value) -> Result<()> {
+    let Some(spec) = get_tool_spec(tool_name) else {
+        return Ok(());
+    };
+
+    validate_value_against_schema(params, &spec.params_schema, "$")
+        .with_context(|| format!("Invalid parameters for tool `{tool_name}`"))
+}
+
+fn validate_value_against_schema(value: &Value, schema: &Value, path: &str) -> Result<()> {
+    if let Some(expected_type) = schema.get("type").and_then(Value::as_str) {
+        match expected_type {
+            "object" => validate_object(value, schema, path)?,
+            "array" => validate_array(value, schema, path)?,
+            "string" => {
+                if !value.is_string() {
+                    return Err(anyhow!("{path} must be a string"));
+                }
+            }
+            "boolean" => {
+                if !value.is_boolean() {
+                    return Err(anyhow!("{path} must be a boolean"));
+                }
+            }
+            "integer" => {
+                let is_integer = value.as_i64().is_some()
+                    || value.as_u64().is_some()
+                    || matches!(value, Value::Number(n) if n.as_i64().is_some() || n.as_u64().is_some());
+                if !is_integer {
+                    return Err(anyhow!("{path} must be an integer"));
+                }
+            }
+            "number" => {
+                if value.as_f64().is_none() {
+                    return Err(anyhow!("{path} must be a number"));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(enum_values) = schema.get("enum").and_then(Value::as_array) {
+        if !enum_values.iter().any(|candidate| candidate == value) {
+            return Err(anyhow!("{path} must be one of the allowed enum values"));
+        }
+    }
+
+    if let Some(one_of) = schema.get("oneOf").and_then(Value::as_array) {
+        let mut matches = 0usize;
+        let mut failures: Vec<(bool, String)> = Vec::new();
+        let action = value
+            .as_object()
+            .and_then(|obj| obj.get("action"))
+            .and_then(Value::as_str);
+        for variant in one_of {
+            match validate_value_against_schema(value, variant, path) {
+                Ok(()) => matches += 1,
+                Err(err) => {
+                    let action_matched = action
+                        .map(|a| schema_variant_matches_action(variant, a))
+                        .unwrap_or(false);
+                    failures.push((action_matched, err.to_string()));
+                }
+            }
+        }
+        if matches != 1 {
+            let detail = failures
+                .iter()
+                .find(|(action_matched, _)| *action_matched)
+                .or_else(|| failures.first())
+                .map(|(_, msg)| msg.as_str());
+            return Err(anyhow!(
+                "{path} must satisfy exactly one schema variant (matched {matches}){}",
+                detail
+                    .map(|msg| format!("; details: {msg}"))
+                    .unwrap_or_default()
+            ));
+        }
+    }
+
+    if let Some(any_of) = schema.get("anyOf").and_then(Value::as_array) {
+        let mut matches = 0usize;
+        let mut failures: Vec<(bool, String)> = Vec::new();
+        let action = value
+            .as_object()
+            .and_then(|obj| obj.get("action"))
+            .and_then(Value::as_str);
+        for variant in any_of {
+            match validate_value_against_schema(value, variant, path) {
+                Ok(()) => matches += 1,
+                Err(err) => {
+                    let action_matched = action
+                        .map(|a| schema_variant_matches_action(variant, a))
+                        .unwrap_or(false);
+                    failures.push((action_matched, err.to_string()));
+                }
+            }
+        }
+        if matches == 0 {
+            let detail = failures
+                .iter()
+                .find(|(action_matched, _)| *action_matched)
+                .or_else(|| failures.first())
+                .map(|(_, msg)| msg.as_str());
+            return Err(anyhow!(
+                "{path} must satisfy at least one schema variant{}",
+                detail
+                    .map(|msg| format!("; details: {msg}"))
+                    .unwrap_or_default()
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_object(value: &Value, schema: &Value, path: &str) -> Result<()> {
+    let obj = value
+        .as_object()
+        .ok_or_else(|| anyhow!("{path} must be an object"))?;
+
+    let required = schema
+        .get("required")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for key in required {
+        let Some(key_name) = key.as_str() else {
+            continue;
+        };
+        if !obj.contains_key(key_name) {
+            return Err(anyhow!("{path}.{key_name} is required"));
+        }
+    }
+
+    let properties = schema.get("properties").and_then(Value::as_object);
+    let allow_additional = schema
+        .get("additionalProperties")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+
+    for (key, child_value) in obj {
+        if let Some(prop_schema) = properties.and_then(|props| props.get(key)) {
+            let child_path = format!("{path}.{key}");
+            validate_value_against_schema(child_value, prop_schema, &child_path)?;
+        } else if !allow_additional {
+            return Err(anyhow!("{path}.{key} is not allowed"));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_array(value: &Value, schema: &Value, path: &str) -> Result<()> {
+    let items = value
+        .as_array()
+        .ok_or_else(|| anyhow!("{path} must be an array"))?;
+    if let Some(item_schema) = schema.get("items") {
+        for (idx, item) in items.iter().enumerate() {
+            let item_path = format!("{path}[{idx}]");
+            validate_value_against_schema(item, item_schema, &item_path)?;
+        }
+    }
+    Ok(())
+}
+
+fn schema_variant_matches_action(variant: &Value, action: &str) -> bool {
+    variant
+        .get("properties")
+        .and_then(Value::as_object)
+        .and_then(|props| props.get("action"))
+        .and_then(|action_schema| action_schema.get("enum"))
+        .and_then(Value::as_array)
+        .map(|candidates| {
+            candidates
+                .iter()
+                .any(|candidate| candidate.as_str() == Some(action))
+        })
+        .unwrap_or(false)
 }
 
 fn load_params(args: &RawArgs) -> Result<Value> {
@@ -410,13 +657,14 @@ fn init_tracing(verbose: u8) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        init_tracing, load_params, parse_external_tool_command, parse_json_object, parse_ports,
-        print_value, run_with_cli,
+        execute_tool, init_tracing, load_params, parse_external_tool_command, parse_json_object,
+        parse_ports, print_value, run_with_cli, validate_tool_params,
     };
     use crate::cli::{
         Cli, Command, InstancesCommand, LspdCommand, OutputFormat, RawArgs, SceneCommand,
         SystemCommand, ToolCommand, UnitydCommand,
     };
+    use serde_json::json;
     use tempfile::tempdir;
 
     fn cli_for(command: Command) -> Cli {
@@ -430,8 +678,15 @@ mod tests {
             port: Some(9),
             timeout_ms: Some(20),
             verbose: 0,
+            dry_run: false,
             command,
         }
+    }
+
+    fn cli_for_dry_run(command: Command) -> Cli {
+        let mut cli = cli_for(command);
+        cli.dry_run = true;
+        cli
     }
 
     struct EnvVarGuard {
@@ -502,6 +757,467 @@ mod tests {
     fn parse_json_object_rejects_non_object() {
         let err = parse_json_object("[1,2,3]").expect_err("array should be rejected");
         assert!(format!("{err:#}").contains("JSON object"));
+    }
+
+    #[test]
+    fn validate_tool_params_rejects_unknown_property_when_schema_is_strict() {
+        let err = validate_tool_params("ping", &json!({ "unknown": true }))
+            .expect_err("unknown key should fail for strict schema");
+        assert!(format!("{err:#}").contains("$.unknown"));
+    }
+
+    #[test]
+    fn validate_tool_params_rejects_missing_required_property() {
+        let err = validate_tool_params("create_scene", &json!({}))
+            .expect_err("missing required property should fail");
+        assert!(format!("{err:#}").contains("$.sceneName is required"));
+    }
+
+    #[test]
+    fn validate_tool_params_accepts_valid_payload() {
+        validate_tool_params(
+            "create_scene",
+            &json!({
+                "sceneName": "Main",
+                "loadScene": true,
+                "addToBuildSettings": false
+            }),
+        )
+        .expect("valid payload should pass");
+    }
+
+    #[test]
+    fn validate_tool_params_accepts_lsp_write_payload_with_path_alias() {
+        validate_tool_params(
+            "rename_symbol",
+            &json!({
+                "path": "Assets/Scripts/Player.cs",
+                "namePath": "Player",
+                "newName": "Hero",
+                "apply": true
+            }),
+        )
+        .expect("rename_symbol payload should pass");
+    }
+
+    #[test]
+    fn validate_tool_params_accepts_build_index_output_path() {
+        validate_tool_params(
+            "build_index",
+            &json!({
+                "scope": "assets",
+                "outputPath": "Library/unity-cli/index.json"
+            }),
+        )
+        .expect("build_index outputPath should pass");
+    }
+
+    #[test]
+    fn validate_tool_params_accepts_create_gameobject_with_vector_fields() {
+        validate_tool_params(
+            "create_gameobject",
+            &json!({
+                "name": "Player",
+                "primitiveType": "cube",
+                "position": { "x": 0.0, "y": 1.0, "z": 2.0 },
+                "rotation": { "x": 0.0, "y": 90.0, "z": 0.0 },
+                "scale": { "x": 1.0, "y": 1.0, "z": 1.0 }
+            }),
+        )
+        .expect("create_gameobject payload should pass");
+    }
+
+    #[test]
+    fn validate_tool_params_rejects_unknown_run_tests_property() {
+        let err = validate_tool_params(
+            "run_tests",
+            &json!({
+                "testMode": "EditMode",
+                "unknown": true
+            }),
+        )
+        .expect_err("unknown key should fail for run_tests schema");
+        assert!(format!("{err:#}").contains("$.unknown is not allowed"));
+    }
+
+    #[test]
+    fn validate_tool_params_accepts_load_scene_by_name() {
+        validate_tool_params(
+            "load_scene",
+            &json!({
+                "sceneName": "SampleScene",
+                "loadMode": "Single"
+            }),
+        )
+        .expect("load_scene sceneName payload should pass");
+    }
+
+    #[test]
+    fn validate_tool_params_rejects_load_scene_with_both_identifiers() {
+        let err = validate_tool_params(
+            "load_scene",
+            &json!({
+                "scenePath": "Assets/Scenes/SampleScene.unity",
+                "sceneName": "SampleScene"
+            }),
+        )
+        .expect_err("load_scene should reject both scenePath and sceneName");
+        assert!(format!("{err:#}").contains("exactly one schema variant"));
+    }
+
+    #[test]
+    fn validate_tool_params_rejects_delete_gameobject_without_target() {
+        let err = validate_tool_params("delete_gameobject", &json!({}))
+            .expect_err("delete_gameobject should require path or paths");
+        assert!(format!("{err:#}").contains("at least one schema variant"));
+    }
+
+    #[test]
+    fn validate_tool_params_accepts_delete_gameobject_with_path_and_paths() {
+        validate_tool_params(
+            "delete_gameobject",
+            &json!({
+                "path": "/Root/Player",
+                "paths": ["/Root/Enemy"]
+            }),
+        )
+        .expect("delete_gameobject should allow path and paths together");
+    }
+
+    #[test]
+    fn validate_tool_params_accepts_add_component_payload() {
+        validate_tool_params(
+            "add_component",
+            &json!({
+                "gameObjectPath": "/Main Camera",
+                "componentType": "UnityEngine.Camera",
+                "properties": {
+                    "fieldOfView": 60.0
+                }
+            }),
+        )
+        .expect("add_component payload should pass");
+    }
+
+    #[test]
+    fn validate_tool_params_rejects_set_component_field_missing_required() {
+        let err = validate_tool_params(
+            "set_component_field",
+            &json!({
+                "componentType": "UnityEngine.Camera"
+            }),
+        )
+        .expect_err("set_component_field should require fieldPath");
+        assert!(format!("{err:#}").contains("$.fieldPath is required"));
+    }
+
+    #[test]
+    fn validate_tool_params_accepts_input_keyboard_batch_actions() {
+        validate_tool_params(
+            "input_keyboard",
+            &json!({
+                "actions": [
+                    { "action": "press", "key": "space" },
+                    { "action": "release", "key": "space" }
+                ]
+            }),
+        )
+        .expect("input_keyboard batched actions should pass");
+    }
+
+    #[test]
+    fn validate_tool_params_rejects_analyze_screenshot_without_source() {
+        let err = validate_tool_params("analyze_screenshot", &json!({}))
+            .expect_err("analyze_screenshot should require imagePath or base64Data");
+        assert!(format!("{err:#}").contains("at least one schema variant"));
+    }
+
+    #[test]
+    fn validate_tool_params_rejects_unknown_field_for_clear_logs() {
+        let err = validate_tool_params("clear_logs", &json!({ "unknown": true }))
+            .expect_err("clear_logs should reject unknown keys");
+        assert!(format!("{err:#}").contains("$.unknown is not allowed"));
+    }
+
+    #[test]
+    fn validate_tool_params_accepts_profiler_start_payload() {
+        validate_tool_params(
+            "profiler_start",
+            &json!({
+                "mode": "normal",
+                "recordToFile": true,
+                "metrics": ["System Used Memory"],
+                "maxDurationSec": 10.0
+            }),
+        )
+        .expect("profiler_start payload should pass");
+    }
+
+    #[test]
+    fn validate_tool_params_accepts_manage_layers_get_by_index() {
+        validate_tool_params(
+            "manage_layers",
+            &json!({
+                "action": "get_by_index",
+                "layerIndex": 8
+            }),
+        )
+        .expect("manage_layers get_by_index payload should pass");
+    }
+
+    #[test]
+    fn validate_tool_params_rejects_manage_layers_invalid_action() {
+        let err = validate_tool_params(
+            "manage_layers",
+            &json!({
+                "action": "invalid"
+            }),
+        )
+        .expect_err("invalid manage_layers action should fail");
+        assert!(format!("{err:#}").contains("allowed enum"));
+    }
+
+    #[test]
+    fn validate_tool_params_rejects_manage_layers_add_without_layer_name() {
+        let err = validate_tool_params(
+            "manage_layers",
+            &json!({
+                "action": "add"
+            }),
+        )
+        .expect_err("manage_layers add should require layerName");
+        assert!(format!("{err:#}").contains("$.layerName is required"));
+    }
+
+    #[test]
+    fn validate_tool_params_accepts_addressables_manage_add_entry() {
+        validate_tool_params(
+            "addressables_manage",
+            &json!({
+                "action": "add_entry",
+                "assetPath": "Assets/Prefabs/Player.prefab",
+                "address": "player",
+                "groupName": "Default"
+            }),
+        )
+        .expect("addressables_manage add_entry payload should pass");
+    }
+
+    #[test]
+    fn validate_tool_params_rejects_addressables_manage_move_entry_without_target_group() {
+        let err = validate_tool_params(
+            "addressables_manage",
+            &json!({
+                "action": "move_entry",
+                "assetPath": "Assets/Prefabs/Player.prefab"
+            }),
+        )
+        .expect_err("addressables_manage move_entry should require targetGroupName");
+        assert!(format!("{err:#}").contains("$.targetGroupName is required"));
+    }
+
+    #[test]
+    fn validate_tool_params_accepts_get_input_actions_state_with_asset_path() {
+        validate_tool_params(
+            "get_input_actions_state",
+            &json!({
+                "assetPath": "Assets/Input/Controls.inputactions",
+                "includeBindings": true
+            }),
+        )
+        .expect("get_input_actions_state payload should pass");
+    }
+
+    #[test]
+    fn validate_tool_params_rejects_remove_input_binding_without_selector() {
+        let err = validate_tool_params(
+            "remove_input_binding",
+            &json!({
+                "assetPath": "Assets/Input/Controls.inputactions",
+                "mapName": "Gameplay",
+                "actionName": "Move"
+            }),
+        )
+        .expect_err("remove_input_binding should require bindingIndex or bindingPath");
+        assert!(format!("{err:#}").contains("at least one schema variant"));
+    }
+
+    #[test]
+    fn validate_tool_params_accepts_package_manager_list_action() {
+        validate_tool_params(
+            "package_manager",
+            &json!({
+                "action": "list",
+                "includeBuiltIn": false
+            }),
+        )
+        .expect("package_manager list payload should pass");
+    }
+
+    #[test]
+    fn validate_tool_params_rejects_package_manager_search_without_keyword() {
+        let err = validate_tool_params(
+            "package_manager",
+            &json!({
+                "action": "search"
+            }),
+        )
+        .expect_err("package_manager search should require keyword");
+        assert!(format!("{err:#}").contains("$.keyword is required"));
+    }
+
+    #[test]
+    fn validate_tool_params_rejects_registry_config_add_scope_without_scope() {
+        let err = validate_tool_params(
+            "registry_config",
+            &json!({
+                "action": "add_scope",
+                "registryName": "OpenUPM"
+            }),
+        )
+        .expect_err("registry_config add_scope should require scope");
+        assert!(format!("{err:#}").contains("$.scope is required"));
+    }
+
+    #[test]
+    fn validate_tool_params_rejects_manage_selection_set_without_object_paths() {
+        let err = validate_tool_params(
+            "manage_selection",
+            &json!({
+                "action": "set"
+            }),
+        )
+        .expect_err("manage_selection set should require objectPaths");
+        assert!(format!("{err:#}").contains("$.objectPaths is required"));
+    }
+
+    #[test]
+    fn validate_tool_params_rejects_manage_tools_activate_without_tool_name() {
+        let err = validate_tool_params(
+            "manage_tools",
+            &json!({
+                "action": "activate"
+            }),
+        )
+        .expect_err("manage_tools activate should require toolName");
+        assert!(format!("{err:#}").contains("$.toolName is required"));
+    }
+
+    #[test]
+    fn validate_tool_params_rejects_manage_windows_focus_without_window_type() {
+        let err = validate_tool_params(
+            "manage_windows",
+            &json!({
+                "action": "focus"
+            }),
+        )
+        .expect_err("manage_windows focus should require windowType");
+        assert!(format!("{err:#}").contains("$.windowType is required"));
+    }
+
+    #[test]
+    fn validate_tool_params_accepts_execute_menu_item_without_action() {
+        validate_tool_params(
+            "execute_menu_item",
+            &json!({
+                "menuPath": "Assets/Refresh",
+                "safetyCheck": true
+            }),
+        )
+        .expect("execute_menu_item should support omitted action (default execute)");
+    }
+
+    #[test]
+    fn validate_tool_params_rejects_execute_menu_item_without_menu_path() {
+        let err = validate_tool_params(
+            "execute_menu_item",
+            &json!({
+                "action": "execute"
+            }),
+        )
+        .expect_err("execute_menu_item execute should require menuPath");
+        assert!(format!("{err:#}").contains("$.menuPath is required"));
+    }
+
+    #[test]
+    fn validate_tool_params_accepts_execute_menu_item_get_available_menus() {
+        validate_tool_params(
+            "execute_menu_item",
+            &json!({
+                "action": "get_available_menus"
+            }),
+        )
+        .expect("execute_menu_item get_available_menus payload should pass");
+    }
+
+    #[test]
+    fn validate_tool_params_rejects_execute_menu_item_without_action_or_menu_path() {
+        let err = validate_tool_params("execute_menu_item", &json!({}))
+            .expect_err("execute_menu_item should require menuPath when action is omitted");
+        assert!(format!("{err:#}").contains("$.menuPath is required"));
+    }
+
+    #[test]
+    fn validate_tool_params_rejects_manage_asset_database_move_without_to_path() {
+        let err = validate_tool_params(
+            "manage_asset_database",
+            &json!({
+                "action": "move_asset",
+                "fromPath": "Assets/A.prefab"
+            }),
+        )
+        .expect_err("manage_asset_database move_asset should require toPath");
+        assert!(format!("{err:#}").contains("$.toPath is required"));
+    }
+
+    #[test]
+    fn validate_tool_params_rejects_addressables_analyze_dependencies_without_asset_path() {
+        let err = validate_tool_params(
+            "addressables_analyze",
+            &json!({
+                "action": "analyze_dependencies"
+            }),
+        )
+        .expect_err("addressables_analyze analyze_dependencies should require assetPath");
+        assert!(format!("{err:#}").contains("$.assetPath is required"));
+    }
+
+    #[test]
+    fn validate_tool_params_accepts_analyze_asset_dependencies_get_dependencies() {
+        validate_tool_params(
+            "analyze_asset_dependencies",
+            &json!({
+                "action": "get_dependencies",
+                "assetPath": "Assets/Prefabs/Player.prefab",
+                "recursive": true
+            }),
+        )
+        .expect("analyze_asset_dependencies get_dependencies payload should pass");
+    }
+
+    #[test]
+    fn validate_tool_params_rejects_analyze_asset_dependencies_get_dependencies_without_asset_path()
+    {
+        let err = validate_tool_params(
+            "analyze_asset_dependencies",
+            &json!({
+                "action": "get_dependencies"
+            }),
+        )
+        .expect_err("get_dependencies should require assetPath");
+        assert!(format!("{err:#}").contains("$.assetPath is required"));
+    }
+
+    #[test]
+    fn validate_tool_params_rejects_analyze_asset_dependencies_invalid_action() {
+        let err = validate_tool_params(
+            "analyze_asset_dependencies",
+            &json!({
+                "action": "unknown"
+            }),
+        )
+        .expect_err("invalid analyze_asset_dependencies action should fail");
+        assert!(format!("{err:#}").contains("allowed enum"));
     }
 
     #[test]
@@ -663,6 +1379,54 @@ mod tests {
         ))
         .await
         .expect("tool list text output should succeed");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn run_with_cli_supports_tool_schema_command() {
+        run_with_cli(cli_for(Command::Tool {
+            command: ToolCommand::Schema { tool_name: None },
+        }))
+        .await
+        .expect("schema list should succeed");
+
+        run_with_cli(cli_for(Command::Tool {
+            command: ToolCommand::Schema {
+                tool_name: Some("ping".to_string()),
+            },
+        }))
+        .await
+        .expect("single schema should succeed");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn execute_tool_skips_mutating_tool_in_dry_run_mode() {
+        let value = execute_tool(
+            &cli_for_dry_run(Command::Tool {
+                command: ToolCommand::List,
+            }),
+            "create_scene",
+            json!({
+                "sceneName": "Main"
+            }),
+        )
+        .await
+        .expect("dry-run mutating tool should not fail");
+
+        assert_eq!(value["dryRun"], true);
+        assert_eq!(value["executed"], false);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn run_with_cli_batch_marks_skipped_items_in_dry_run_mode() {
+        run_with_cli(cli_for_dry_run(Command::Batch {
+            json: Some(
+                r#"[{"tool":"create_scene","params":{"sceneName":"Main"}},{"tool":"list_packages","params":{}}]"#
+                    .to_string(),
+            ),
+            stdin: false,
+        }))
+        .await
+        .expect("batch with dry-run should succeed");
     }
 
     #[tokio::test(flavor = "current_thread")]

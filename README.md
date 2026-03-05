@@ -83,6 +83,12 @@ unity-cli raw create_gameobject --json '{"name":"Player"}'
 # Search C# code (local tool)
 unity-cli tool call search --json '{"pattern":"PlayerController"}'
 
+# Inspect machine-readable tool schema
+unity-cli tool schema create_scene --output json
+
+# Dry-run mutating tool calls (no side effects)
+unity-cli --dry-run tool call create_scene --json '{"sceneName":"PreviewScene"}'
+
 # Run EditMode tests
 unity-cli tool call run_tests --json '{"mode":"editmode"}'
 ```
