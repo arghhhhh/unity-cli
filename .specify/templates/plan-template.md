@@ -1,7 +1,7 @@
 # 実装計画: [機能名]
 
-**要件ID**: `SPEC-[UUID8桁]` | **日付**: [日付] | **仕様**: [リンク]  
-**入力**: `/specs/SPEC-[UUID8桁]/spec.md` の機能仕様
+**Spec Issue**: `#<issue-number>` | **日付**: [日付] | **仕様**: [Issueリンク]  
+**入力**: `gwt-spec` ラベル付き GitHub Issue の `## Spec` セクション
 
 **注記**: このテンプレートは `/speckit.plan` コマンドにより埋められます。実行ワークフローは `.specify/templates/commands/plan.md` を参照してください。
 
@@ -37,13 +37,16 @@
 ### ドキュメント（この要件）
 
 ```text
-specs/SPEC-[UUID8桁]/
-├── plan.md              # このファイル (/speckit.plan コマンド出力)
-├── research.md          # Phase 0 出力 (/speckit.plan コマンド)
-├── data-model.md        # Phase 1 出力 (/speckit.plan コマンド)
-├── quickstart.md        # Phase 1 出力 (/speckit.plan コマンド)
-├── contracts/           # Phase 1 出力 (/speckit.plan コマンド)
-└── tasks.md             # Phase 2 出力 (/speckit.tasks コマンド出力 - /speckit.plan では作成しない)
+GitHub Issue #<issue-number> (label: gwt-spec)
+├── ## Spec
+├── ## Plan              # このファイル相当 (/speckit.plan コマンド出力)
+├── ## Tasks             # Phase 2 出力 (/speckit.tasks コマンド)
+├── ## TDD
+├── ## Research          # Phase 0 出力 (/speckit.plan コマンド)
+├── ## Data Model        # Phase 1 出力 (/speckit.plan コマンド)
+├── ## Quickstart        # Phase 1 出力 (/speckit.plan コマンド)
+├── ## Contracts         # artifact comment: contract:<name>
+└── ## Checklists        # artifact comment: checklist:<name>
 ```
 
 ### ソースコード（リポジトリルート）

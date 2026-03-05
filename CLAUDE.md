@@ -36,7 +36,7 @@ Node.js + MCP プロトコルベースの旧実装を Rust + TCP 直接通信に
 - 3ステップ以上、または設計判断を含む作業は Plan Mode で開始する
 - 実装だけでなく、検証・ロールバック方針も計画に含める
 - 途中で前提が崩れたら実装を止めて再計画する
-- 新規機能・大きな変更は Spec（`spec.md` / `plan.md` / `tasks.md`）を先に更新する
+- 新規機能・大きな変更は `gwt-spec` ラベル付き GitHub Issue の `Spec` / `Plan` / `Tasks` / `TDD` を先に更新する
 
 ### 2. サブエージェントを意図的に使う
 
@@ -95,11 +95,11 @@ dotnet test lsp/Server.Tests.csproj
 
 ## Spec-Driven Development
 
-新規機能・大きな変更は次を更新:
+新規機能・大きな変更は GitHub Issue-first で管理する:
 
-- `specs/SPEC-xxxxxxxx/spec.md`
-- `specs/SPEC-xxxxxxxx/plan.md`
-- `specs/SPEC-xxxxxxxx/tasks.md`
+- `gwt-spec` ラベル付き Issue の本文（`Spec` / `Plan` / `Tasks` / `TDD`）
+- SPEC ID は `SPEC-xxxxxxxx` ではなく Issue 番号を使う
+- 新規の `specs/SPEC-*` ディレクトリは作成しない
 
 ## リリース
 
@@ -114,4 +114,5 @@ dotnet test lsp/Server.Tests.csproj
 - `lsp/`: C# LSP
 - `UnityCliBridge/Packages/unity-cli-bridge/`: Unity UPM package
 - `docs/`: 運用ドキュメント
-- `.specify/`, `specs/`: 仕様/TDD運用
+- `.specify/`: Spec Kit テンプレート・補助スクリプト
+- `specs/`: アーキテクチャ/移行ノートなどの設計ドキュメント

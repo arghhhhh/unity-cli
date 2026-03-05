@@ -1,6 +1,6 @@
 # 機能仕様書: [機能名]
 
-**要件ID**: `SPEC-[UUID8桁]`  
+**Spec Issue**: `#<issue-number>`（SPEC ID は GitHub Issue 番号）  
 **作成日**: [日付]  
 **ステータス**: 下書き  
 **入力**: ユーザー説明: "$ARGUMENTS"
