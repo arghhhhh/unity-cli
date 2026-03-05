@@ -40,8 +40,8 @@
 
 ## Spec要件
 
-- 新機能は `specs/SPEC-xxxxxxxx/` を作成・更新する
-- `.specify/current-feature` を作業対象として運用する
+- 新機能・大きな変更は `gwt-spec` ラベル付き GitHub Issue を作成・更新する
+- Issue 本文の `Spec` / `Plan` / `Tasks` / `TDD` セクションを単一情報源として運用する
 
 ## ライセンス要件
 
@@ -90,6 +90,6 @@ rg -n "(^|\\s)memory/constitution\\.md" -S --hidden .
 
 更新時は、`docs/constitution.md` の version / 日付、および plan-template フッターの version を一致させる。
 
-**バージョン**: 2.0.0  
+**バージョン**: 2.1.0  
 **制定日**: 2025-10-17  
-**最終改定**: 2026-02-17
+**最終改定**: 2026-03-06

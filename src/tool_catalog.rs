@@ -1897,13 +1897,27 @@ fn tool_params_schema(name: &str) -> Value {
                 ),
             ],
         ),
-        "addressables_build" => object_schema(
-            &[
-                ("action", enum_string_schema(&["build", "clean_build"])),
-                ("buildTarget", string_schema()),
+        "addressables_build" => with_one_of(
+            object_schema(
+                &[
+                    ("action", enum_string_schema(&["build", "clean_build"])),
+                    ("buildTarget", string_schema()),
+                ],
+                &["action"],
+                false,
+            ),
+            vec![
+                object_schema(
+                    &[("action", enum_string_schema(&["build"]))],
+                    &["action"],
+                    true,
+                ),
+                object_schema(
+                    &[("action", enum_string_schema(&["clean_build"]))],
+                    &["action"],
+                    true,
+                ),
             ],
-            &["action"],
-            false,
         ),
         "addressables_analyze" => with_one_of(
             object_schema(
@@ -2078,7 +2092,7 @@ fn enum_string_schema(values: &[&str]) -> Value {
 #[cfg(test)]
 mod tests {
     use super::{get_tool_spec, is_known_tool, list_tool_specs, ToolExecutor, TOOL_NAMES};
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     #[test]
     fn tool_catalog_keeps_manifest_parity_count() {
@@ -2338,5 +2352,28 @@ mod tests {
             spec.params_schema["properties"]["action"]["enum"],
             json!(["execute", "get_available_menus"])
         );
+    }
+
+    #[test]
+    fn action_enum_schemas_use_composite_variants() {
+        for name in TOOL_NAMES {
+            let spec = get_tool_spec(name).expect("tool must exist");
+            let has_action_enum = spec
+                .params_schema
+                .get("properties")
+                .and_then(Value::as_object)
+                .and_then(|props| props.get("action"))
+                .and_then(|action_schema| action_schema.get("enum"))
+                .and_then(Value::as_array)
+                .is_some();
+            if has_action_enum {
+                let has_one_of = spec.params_schema.get("oneOf").is_some();
+                let has_any_of = spec.params_schema.get("anyOf").is_some();
+                assert!(
+                    has_one_of || has_any_of,
+                    "tool `{name}` has action enum but missing oneOf/anyOf variants"
+                );
+            }
+        }
     }
 }

@@ -1,7 +1,7 @@
 # 実装計画: [機能名]
 
-**機能ID**: `SPEC-[UUID8桁]` (例: `SPEC-a1b2c3d4`) | **日付**: [日付] | **仕様**: [リンク]
-**入力**: `/specs/SPEC-[UUID8桁]/spec.md`の機能仕様
+**Spec Issue**: `#<issue-number>` | **日付**: [日付] | **仕様**: [Issueリンク]
+**入力**: `gwt-spec` ラベル付き GitHub Issue の `## Spec` セクション
 
 ## 実行フロー (/plan コマンドのスコープ)
 ```
@@ -79,13 +79,16 @@
 
 ### ドキュメント (この機能)
 ```
-specs/SPEC-[UUID8桁]/
-├── plan.md              # このファイル (/plan コマンド出力)
-├── research.md          # Phase 0 出力 (/plan コマンド)
-├── data-model.md        # Phase 1 出力 (/plan コマンド)
-├── quickstart.md        # Phase 1 出力 (/plan コマンド)
-├── contracts/           # Phase 1 出力 (/plan コマンド)
-└── tasks.md             # Phase 2 出力 (/tasks コマンド - /planでは作成しない)
+GitHub Issue #<issue-number> (label: gwt-spec)
+├── ## Spec
+├── ## Plan              # このファイル相当 (/plan コマンド出力)
+├── ## Tasks             # Phase 2 出力 (/tasks コマンド)
+├── ## TDD
+├── ## Research          # Phase 0 出力 (/plan コマンド)
+├── ## Data Model        # Phase 1 出力 (/plan コマンド)
+├── ## Quickstart        # Phase 1 出力 (/plan コマンド)
+├── ## Contracts         # artifact comment: contract:<name>
+└── ## Checklists        # artifact comment: checklist:<name>
 ```
 
 ### ソースコード (リポジトリルート)
@@ -233,4 +236,4 @@ ios/ または android/
 - [ ] 複雑さの逸脱を文書化済み
 
 ---
-*憲章 v1.0.0 に基づく - `/docs/constitution.md` 参照*
+*憲章 v2.1.0 に基づく - `/docs/constitution.md` 参照*

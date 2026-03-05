@@ -1,6 +1,6 @@
 # タスク: [機能名]
 
-**入力**: `/specs/SPEC-[UUID8桁]/`の設計ドキュメント
+**入力**: `gwt-spec` ラベル付き GitHub Issue の `Plan` / `Research` / `Data Model` / `Contracts` セクション
 **前提条件**: plan.md (必須), research.md, data-model.md, contracts/
 
 ## 実行フロー (main)

@@ -7,7 +7,7 @@
 - Title: CLI 引数仕様の明示化と実行前バリデーション強化
 - Request Date: 2026-03-06
 - Owner: Codex
-- Scope: `tool schema` 追加、`--dry-run` 導入、JSON Schema 検証（`oneOf`/`anyOf` 対応）、action別必須を含む主要ツールの厳格スキーマ化、関連ドキュメント更新
+- Scope: `tool schema` 追加、`--dry-run` 導入、JSON Schema 検証（`oneOf`/`anyOf` 対応）、action別必須を含む主要ツールの厳格スキーマ化、Issue-first Spec/TDD 運用へのドキュメント・テンプレート整合
 - Spec: Issue-first 運用（ローカル `specs/SPEC-*` は新規作成しない）
 
 ## Plan
@@ -18,12 +18,14 @@
 - [x] Step 4: パラメータ検証器を実装し、`type`/`required`/`additionalProperties`/`enum`/`oneOf`/`anyOf` を実行前に検証
 - [x] Step 5: 主要ツール群の `params_schema` を strict 化し、回帰テストを追加
 - [x] Step 6: README / docs 更新と品質ゲート通過確認
+- [x] Step 7: Spec/TDD テンプレートと Speckit 注意書きを Issue-first 方針へ整合
 
 ## Verification
 
 - [x] `cargo fmt --all` — pass
 - [x] `cargo clippy --all-targets -- -D warnings` — pass
-- [x] `cargo test --all-targets` — 198 tests pass
+- [x] `cargo test --all-targets` — 199 tests pass
+- [ ] `dotnet test lsp/Server.Tests.csproj` — `dotnet` command not found
 - [x] `cargo run -- tool schema create_scene --output json` — schema 出力確認
 - [x] `cargo run -- --dry-run tool call create_scene --json '{"sceneName":"PreviewScene"}' --output json` — dry-run スキップ応答確認
 
@@ -37,4 +39,4 @@
 
 - 2026-02-27: CLAUDE.md 運用強化 / `tasks/*.md` 作成と参照追記を完了
 - 2026-03-02: Issue #54 パス不整合修正 — 3ファイル修正完了、Rust 品質ゲート全通過
-- 2026-03-06: CLI 引数仕様強化 — `tool schema` / `--dry-run` / strict schema validation + action別必須検証 実装、docs更新、198 tests pass
+- 2026-03-06: CLI 引数仕様強化 — `tool schema` / `--dry-run` / strict schema validation + action別必須検証 実装、Issue-first Spec/TDD 運用に docs+templates+constitution mirror を整合、199 tests pass
