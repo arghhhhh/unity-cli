@@ -1,3 +1,21 @@
+## [0.2.3] - 2026-03-05
+
+### 🚀 Features
+
+- Add gh skills sync skill for codex and claude
+- *(cli)* Add strict schema introspection and action-aware validation
+- *(cli)* Tighten schema variants and align issue-first spec templates
+
+### 🐛 Bug Fixes
+
+- *(ci)* Use PAT only for auto-merge to enable closing keywords
+
+### ⚙️ Miscellaneous Tasks
+
+- Add gh skills to project codex skills
+- Add gh skills sync script
+- *(spec)* Regenerate specs index for current repository state
+
 ## [0.2.2] - 2026-03-03
 
 ### 🐛 Bug Fixes
