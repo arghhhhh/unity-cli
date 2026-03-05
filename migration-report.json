@@ -1,0 +1,36 @@
+[
+  {"oldSpecId": "SPEC-0b6b106c", "issueNumber": 66, "title": "機能仕様書: SerializeField 値更新ツール", "status": "migrated"}
+  , {"oldSpecId": "SPEC-0d5d84f9", "issueNumber": 67, "title": "機能仕様書: Input System統合機能", "status": "migrated"}
+  , {"oldSpecId": "SPEC-1591581c", "issueNumber": 68, "title": "機能仕様書: Unity Profilerパフォーマンス計測", "status": "migrated"}
+  , {"oldSpecId": "SPEC-1ac96646", "issueNumber": 69, "title": "機能仕様書: 4層リリースフロー（feature → develop → release/* → main）", "status": "migrated"}
+  , {"oldSpecId": "SPEC-1d1a194a", "issueNumber": 70, "title": "機能仕様書: MCP Capabilities正常認識", "status": "migrated"}
+  , {"oldSpecId": "SPEC-2e6d9a3b", "issueNumber": 71, "title": "機能仕様書: コンソール管理機能", "status": "migrated"}
+  , {"oldSpecId": "SPEC-3c9871b3", "issueNumber": 72, "title": "機能仕様書: GameObject/Scene管理機能", "status": "migrated"}
+  , {"oldSpecId": "SPEC-3d9b5f4e", "issueNumber": 73, "title": "機能仕様書: Editor制御機能", "status": "migrated"}
+  , {"oldSpecId": "SPEC-432610ad", "issueNumber": 74, "title": "SPEC-432610ad: Docker(Linux) → Windows Unity ホストでキャプチャ出力パス不整合の修正", "status": "migrated"}
+  , {"oldSpecId": "SPEC-4ebff657", "issueNumber": 75, "title": "機能仕様書: Unity メニュー起動とサンプルワークフロー", "status": "migrated"}
+  , {"oldSpecId": "SPEC-56860fa4", "issueNumber": 76, "title": "機能仕様書: UI自動化・操作機能", "status": "migrated"}
+  , {"oldSpecId": "SPEC-5873e340", "issueNumber": 77, "title": "機能仕様書: Component管理機能", "status": "migrated"}
+  , {"oldSpecId": "SPEC-5c438276", "issueNumber": 78, "title": "機能仕様書: PlayMode制御機能", "status": "migrated"}
+  , {"oldSpecId": "SPEC-636fc0af", "issueNumber": 79, "title": "機能仕様書: OpenUPM配布のUPMパッケージ署名対応（Unity 6.3+）", "status": "migrated"}
+  , {"oldSpecId": "SPEC-7a2c8e6d", "issueNumber": 80, "title": "機能仕様書: プロジェクト設定管理機能", "status": "migrated"}
+  , {"oldSpecId": "SPEC-83cb078a", "issueNumber": 81, "title": "機能仕様書: Asset/Prefab/Material管理機能", "status": "migrated"}
+  , {"oldSpecId": "SPEC-83d9d7ee", "issueNumber": 82, "title": "機能仕様書: Rust版 unity-cli 置換・UPM統合・TDD整備", "status": "migrated"}
+  , {"oldSpecId": "SPEC-911befe7", "issueNumber": 83, "title": "機能仕様書: マルチインスタンス安全切替 CLI", "status": "migrated"}
+  , {"oldSpecId": "SPEC-9d2bc43b", "issueNumber": 84, "title": "機能仕様書: Unity MCP基本接続機能", "status": "migrated"}
+  , {"oldSpecId": "SPEC-9f4b1a7c", "issueNumber": 85, "title": "機能仕様書: パッケージ管理機能", "status": "migrated"}
+  , {"oldSpecId": "SPEC-a108b8a3", "issueNumber": 86, "title": "機能仕様書: Unity Addressablesコマンドサポート", "status": "migrated"}
+  , {"oldSpecId": "SPEC-a28f3f95", "issueNumber": 87, "title": "機能仕様書: HTTP/プロキシ対応とテレメトリ透明性", "status": "migrated"}
+  , {"oldSpecId": "SPEC-a7206673", "issueNumber": 88, "title": "機能仕様書: CLI実行効率の最適化", "status": "migrated"}
+  , {"oldSpecId": "SPEC-a87a5172", "issueNumber": 89, "title": "機能仕様書: Unity接続設定の分離", "status": "migrated"}
+  , {"oldSpecId": "SPEC-a99caa4b", "issueNumber": 90, "title": "SPEC-a99caa4b", "status": "migrated"}
+  , {"oldSpecId": "SPEC-aa9bcffb", "issueNumber": 91, "title": "機能仕様書: fast-sql SQLite最適化ラッパーライブラリ", "status": "migrated"}
+  , {"oldSpecId": "SPEC-bf408776", "issueNumber": 92, "title": "機能仕様書: PRベースの自動マージ機能", "status": "migrated"}
+  , {"oldSpecId": "SPEC-c00be76f", "issueNumber": 93, "title": "機能仕様書: スクリーンショット・動画キャプチャ機能", "status": "migrated"}
+  , {"oldSpecId": "SPEC-e7035f70", "issueNumber": 94, "title": "機能仕様書: Unity接続設定の分離", "status": "migrated"}
+  , {"oldSpecId": "SPEC-e757a01f", "issueNumber": 95, "title": "機能仕様書: C# LSP統合機能", "status": "migrated"}
+  , {"oldSpecId": "SPEC-e7c9b50c", "issueNumber": 96, "title": "機能仕様書: Unity Test Execution（ユニットテスト実行）機能", "status": "migrated"}
+  , {"oldSpecId": "SPEC-e8f7a2c1", "issueNumber": 97, "title": "機能仕様書: シーン分析・デバッグ機能", "status": "migrated"}
+  , {"oldSpecId": "SPEC-e9854a10", "issueNumber": 98, "title": "SPEC-e9854a10", "status": "migrated"}
+  , {"oldSpecId": "SPEC-f9db125c", "issueNumber": 99, "title": "機能仕様書: Node/Unityパッケージversion不一致検出", "status": "migrated"}
+]

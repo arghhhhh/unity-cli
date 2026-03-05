@@ -87,6 +87,23 @@ unity-cli tool call search --json '{"pattern":"PlayerController"}'
 unity-cli tool call run_tests --json '{"mode":"editmode"}'
 ```
 
+## GWT Spec Migration (Issue-first)
+
+If you need to migrate local `specs/SPEC-*` directories to GitHub issues, use:
+
+```bash
+scripts/migrate-specs-to-issues.sh --dry-run --specs-dir "$(pwd)/specs"
+```
+
+If the plan looks correct, run without `--dry-run`:
+
+```bash
+scripts/migrate-specs-to-issues.sh --specs-dir "$(pwd)/specs"
+```
+
+The script writes progress/results to `migration-report.json` and applies the
+`gwt-spec` label to created issues.
+
 ## Configuration
 
 | Variable | Description | Default |
