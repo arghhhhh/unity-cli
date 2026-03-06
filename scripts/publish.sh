@@ -7,8 +7,9 @@ set -euo pipefail
 # 単一入口で以下を実施:
 # 1) バージョン更新（CLI/LSP/Unity の全て）
 # 2) タグ付けとコミット＆プッシュ
-# 期待動作（CI）:
-#  - Release binary（各OS向けビルド）
+# 期待動作:
+#  - ローカルで crates.io に publish
+#  - GitHub Actions で Release binary（各OS向けビルド）
 
 usage() { echo "Usage: $0 <major|minor|patch> [--tags-only|--no-push] [--remote <name>]"; exit 1; }
 
@@ -156,6 +157,9 @@ else
   git tag -a "$TAG" -m "$TAG"
 fi
 
+echo "[step] running cargo publish..."
+cargo publish || { echo "[error] cargo publish failed. Release not pushed." >&2; exit 1; }
+
 # ──────────────────────────────────────────────
 # Push
 # ──────────────────────────────────────────────
@@ -206,5 +210,5 @@ else
   fi
 fi
 
-echo "[done] v$NEW_VER pushed. Check GitHub Actions: unity-cli-release"
-echo "- Release URL (runs): https://github.com/akiojin/unity-cli/actions/workflows/unity-cli-release.yml"
+echo "[done] v$NEW_VER pushed. Check GitHub Actions: release"
+echo "- Release URL (runs): https://github.com/akiojin/unity-cli/actions/workflows/release.yml"

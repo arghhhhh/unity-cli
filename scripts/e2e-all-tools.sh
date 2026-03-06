@@ -132,7 +132,7 @@ if [[ -z "${UNITY_CLI}" ]]; then
 fi
 
 if [[ -z "${UNITY_CLI}" || ! -x "${UNITY_CLI}" ]]; then
-  echo "ERROR: unity-cli not found. Build with 'cargo build --release' or install from crates.io." >&2
+  echo "ERROR: unity-cli not found. Build with 'cargo build --release' or install a release binary." >&2
   exit 1
 fi
 

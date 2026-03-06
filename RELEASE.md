@@ -5,138 +5,130 @@
 Run the publish script from the repository root:
 
 ```bash
-./scripts/publish.sh 0.2.0
+./scripts/publish.sh patch
 ```
 
-The script automates the full release pipeline:
+`scripts/publish.sh` is the release entrypoint. It:
 
-1. Validates clean working tree and `main` branch
-2. Verifies `Cargo.toml` version matches the target version
-3. Runs `cargo test` and `dotnet test lsp/Server.Tests.csproj`
-4. Performs `cargo publish --dry-run` to catch packaging issues
-5. Prompts for confirmation
-6. Publishes the crate to crates.io via `cargo publish`
-7. Creates and pushes the git tag `vX.Y.Z`
+1. Verifies the working tree is clean
+2. Bumps the workspace version with `npm version <major|minor|patch>`
+3. Syncs the Unity package and LSP versions
+4. Runs `cargo test`, `dotnet test lsp/Server.Tests.csproj`, and `cargo publish --dry-run`
+5. Commits the version sync, creates `vX.Y.Z`, and runs `cargo publish`
+6. Pushes the release commit and tag
 
-Once the tag is pushed, **GitHub Actions** automatically:
-
-1. Validates the tag and runs the test suite
-2. Builds release binaries for linux-x64, macos-arm64, and windows-x64
-3. Creates a GitHub Release with the built artifacts
+After the push, GitHub Actions `release.yml` builds the release binaries and uploads the GitHub Release assets.
 
 ## Tag Convention
 
-All release tags use the format `vX.Y.Z` (e.g. `v0.1.0`, `v1.0.0`).
+All release tags use the format `vX.Y.Z` (for example `v0.2.3`).
 
 ## Release Workflow Details
 
 ### `scripts/publish.sh`
 
-Pre-publish validation script. Accepts a version argument without the `v` prefix:
+Usage:
 
 ```bash
-./scripts/publish.sh <VERSION>
+./scripts/publish.sh <major|minor|patch> [--tags-only|--no-push] [--remote <name>]
 ```
 
-Checks performed before publishing:
+Checks performed before publish:
 
 | Step | Description |
-| ------ | ------------- |
+| --- | --- |
 | 1 | Git working tree is clean (no uncommitted or untracked files) |
-| 2 | Current branch is `main` |
-| 3 | `Cargo.toml` version matches the provided version |
-| 4 | Tag `vX.Y.Z` does not already exist |
-| 5 | `cargo test` passes |
-| 6 | `dotnet test lsp/Server.Tests.csproj` passes |
-| 7 | `cargo publish --dry-run` succeeds |
+| 2 | `node` is available for the version bump |
+| 3 | `cargo test` passes |
+| 4 | `dotnet test lsp/Server.Tests.csproj` passes |
+| 5 | `cargo publish --dry-run` succeeds |
+| 6 | `cargo publish` succeeds |
+
+The script then creates the annotated tag `vX.Y.Z` and pushes the commit and tag to the selected remote.
 
 ### `.github/workflows/release.yml`
 
 Triggered by:
 
-- **Tag push**: Pushing a `v*` tag (created by `publish.sh`)
-- **Manual dispatch**: Enter the `release_tag` (e.g. `v0.2.0`) in the GitHub Actions UI
+- Pushes to `main` whose commit message contains `chore(release):`
+- Manual dispatch from the GitHub Actions UI
 
 Jobs:
 
 | Job | Description |
-| ----- | ------------- |
-| `validate` | Checks tag format, verifies Cargo.toml version, runs cargo test and dotnet test |
-| `build` | Matrix build for linux-x64, macos-arm64, windows-x64 |
-| `release` | Creates a GitHub Release and attaches the built binaries |
+| --- | --- |
+| `create-tag` | Creates the release tag if it does not exist yet |
+| `build` | Matrix build for `unity-cli` release binaries |
+| `build-lsp` | Matrix build for the bundled C# LSP binaries |
+| `upload-release` | Uploads all built artifacts to the GitHub Release |
 
-Release artifacts:
+Release artifacts include:
 
 - `unity-cli-linux-x64`
+- `unity-cli-linux-arm64`
 - `unity-cli-macos-arm64`
 - `unity-cli-windows-x64.exe`
+- `csharp-lsp-linux-x64`
+- `csharp-lsp-linux-arm64`
+- `csharp-lsp-osx-arm64`
+- `csharp-lsp-win-x64`
+- `csharp-lsp-manifest.json`
 
 ## Step-by-Step Release Checklist
 
-1. Ensure all changes are merged to `main`
-2. Update `version` in `Cargo.toml` to the new version
-3. Commit the version bump: `git commit -am "chore: bump version to X.Y.Z"`
-4. Run the publish script:
+1. Ensure the release changes are merged and the working tree is clean
+2. Run:
+
    ```bash
-   ./scripts/publish.sh X.Y.Z
+   ./scripts/publish.sh patch
    ```
-5. Confirm the prompt to publish and push
-6. Verify the GitHub Actions [Release workflow](../../actions/workflows/release.yml) completes
-7. Verify the [GitHub Release](../../releases) page has the correct artifacts
+
+3. Verify the [Release workflow](../../actions/workflows/release.yml) succeeds
+4. Verify the crate appears on crates.io
+5. Verify the [GitHub Release](../../releases) page contains the expected assets
 
 ## Troubleshooting
 
 ### `publish.sh` fails with "working tree is not clean"
 
-Commit or stash all changes before running the script:
+Commit or remove the pending changes, then rerun:
 
 ```bash
-git stash        # or git commit
-./scripts/publish.sh X.Y.Z
+git status --short
+./scripts/publish.sh patch
 ```
 
-### `publish.sh` fails with "Must be on 'main' branch"
+### `publish.sh` fails with `dotnet test`
 
-Switch to the main branch first:
-
-```bash
-git checkout main
-git pull origin main
-./scripts/publish.sh X.Y.Z
-```
-
-### `publish.sh` fails with "Cargo.toml version is '...' but release version is '...'"
-
-Update `Cargo.toml` to match the version you want to release:
+Install the required .NET SDK and rerun:
 
 ```bash
-# Edit Cargo.toml, set version = "X.Y.Z"
-git commit -am "chore: bump version to X.Y.Z"
-./scripts/publish.sh X.Y.Z
+dotnet --info
+./scripts/publish.sh patch
 ```
 
 ### `cargo publish` fails with authentication error
 
-Ensure you are logged in to crates.io:
+Log in to crates.io on the release machine:
 
 ```bash
 cargo login
+./scripts/publish.sh patch
 ```
 
 ### GitHub Actions release workflow fails
 
-- Check the [Actions tab](../../actions/workflows/release.yml) for detailed logs
-- For manual re-trigger, use **workflow_dispatch** with the release tag
-- If the tag was pushed but the workflow failed, fix the issue and re-run the workflow from the Actions UI
+- Check the [Actions tab](../../actions/workflows/release.yml) for logs
+- Re-run the failed workflow from GitHub Actions after fixing the issue
+- If assets are missing, verify the release tag exists on the remote
 
 ### Tag already exists
 
-If you need to re-release the same version:
+If the release tag was created locally but not pushed successfully:
 
 ```bash
-git tag -d vX.Y.Z              # delete local tag
-git push origin :refs/tags/vX.Y.Z  # delete remote tag
-./scripts/publish.sh X.Y.Z     # re-run
+git tag -d vX.Y.Z
+./scripts/publish.sh patch
 ```
 
-Note: You cannot re-publish the same version to crates.io. If the crate was already published, you must bump the version.
+If the crate was already published to crates.io, you must bump the version before retrying.
