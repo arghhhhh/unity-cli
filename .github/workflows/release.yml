@@ -78,6 +78,24 @@ jobs:
           name: ${{ steps.version.outputs.tag }}
           body: ${{ steps.release-notes.outputs.notes }}
 
+  publish-crate:
+    name: Publish to crates.io
+    needs: create-tag
+    if: needs.create-tag.outputs.created == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.create-tag.outputs.tag }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish crate
+        run: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
   build:
     name: Build (${{ matrix.target }})
     needs: create-tag
