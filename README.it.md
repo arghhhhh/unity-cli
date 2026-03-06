@@ -32,7 +32,8 @@ Installa il plugin `unity-cli` dal Claude Code Marketplace:
 /plugin marketplace add akiojin/unity-cli
 ```
 
-Se `cargo` e disponibile, il setup del plugin puo installare o aggiornare automaticamente `unity-cli`.
+Il plugin del Marketplace installa solo gli skill. Installa il binario
+`unity-cli` separatamente con una delle opzioni manuali qui sotto.
 
 ### Codex Skills
 
@@ -41,8 +42,14 @@ Non e necessaria alcuna configurazione aggiuntiva — basta clonare il repositor
 
 ### Installazione manuale
 
+Scarica il binary piu recente da [GitHub
+Releases](https://github.com/akiojin/unity-cli/releases), oppure installalo da
+un clone locale:
+
 ```bash
-cargo install unity-cli
+git clone https://github.com/akiojin/unity-cli.git
+cd unity-cli
+cargo install --path .
 ```
 
 URL del pacchetto UPM lato Unity:

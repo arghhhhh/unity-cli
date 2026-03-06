@@ -1,3 +1,9 @@
+## [0.2.4] - 2026-03-06
+
+### 🐛 Bug Fixes
+
+- *(ci)* Skip lsp-perf job on release commits to avoid 404 race condition
+- *(release)* Publish crate and align install docs
 ## [0.2.3] - 2026-03-05
 
 ### 🚀 Features

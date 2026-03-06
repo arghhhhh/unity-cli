@@ -13,9 +13,9 @@
   - `dotnet test lsp/Server.Tests.csproj`
   - `cargo llvm-cov` (Rust coverage gate, line >= 90%)
   - `dotnet test ... /p:CollectCoverage=true` (LSP coverage gate, line >= 90%)
-- `unity-cli-release.yml`
-  - triggers on `v*` tag
-  - builds release binaries for Linux/macOS/Windows
+- `release.yml`
+  - runs after `chore(release):` pushes to `main` or manual dispatch
+  - creates the release tag, builds release binaries for Linux/macOS/Windows
   - publishes GitHub Release assets
 - `specs-readme.yml`
   - verifies `specs/specs.md` is in sync with Spec Kit
