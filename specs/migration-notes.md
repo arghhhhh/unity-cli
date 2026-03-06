@@ -70,7 +70,7 @@ Unity 側の UPM パッケージは引き続き同一リポジトリ内で管理
 |------|----|----|
 | テスト | npm test | cargo test + dotnet test |
 | リリース | npm publish | cargo publish + GitHub Release |
-| ワークフロー | ― | `.github/workflows/unity-cli-release.yml` |
+| ワークフロー | ― | `.github/workflows/release.yml` |
 
 ## 削除された機能
 

@@ -32,7 +32,7 @@ Claude Code
 /plugin marketplace add akiojin/unity-cli
 ```
 
-如果环境中可用 `cargo`，插件安装流程可自动安装或更新 `unity-cli`。
+Marketplace 插件只会安装 skills。`unity-cli` 二进制本体需要使用下面的手动方式之一单独安装。
 
 ### Codex Skills
 
@@ -41,8 +41,13 @@ Claude Code
 
 ### 手动安装
 
+可以从 [GitHub Releases](https://github.com/akiojin/unity-cli/releases)
+下载最新二进制，或者从本地 clone 安装:
+
 ```bash
-cargo install unity-cli
+git clone https://github.com/akiojin/unity-cli.git
+cd unity-cli
+cargo install --path .
 ```
 
 Unity 侧 UPM 包 URL:

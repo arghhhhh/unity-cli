@@ -103,10 +103,10 @@ dotnet test lsp/Server.Tests.csproj
 
 ## リリース
 
-- バージョン同期: `node scripts/release/update-versions.mjs <X.Y.Z>`
+- リリース実行: `./scripts/publish.sh <major|minor|patch>`
 - タグ: `vX.Y.Z`
-- GitHub Actions: `.github/workflows/unity-cli-release.yml`
-- crates.io 公開: `cargo publish`
+- GitHub Actions: `.github/workflows/release.yml`
+- crates.io 公開: `scripts/publish.sh` が `cargo publish` を実行
 
 ## 主要ディレクトリ
 

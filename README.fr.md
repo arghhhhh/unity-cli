@@ -32,7 +32,8 @@ Installez le plugin `unity-cli` depuis la Marketplace de Claude Code:
 /plugin marketplace add akiojin/unity-cli
 ```
 
-Si `cargo` est disponible, l installation du plugin peut installer ou mettre a jour automatiquement `unity-cli`.
+Le plugin Marketplace installe uniquement les skills. Installez le binaire
+`unity-cli` separement avec l une des options manuelles ci-dessous.
 
 ### Codex Skills
 
@@ -41,8 +42,14 @@ Aucune configuration supplementaire n est necessaire — il suffit de cloner le 
 
 ### Installation manuelle
 
+Telechargez le dernier binaire depuis [GitHub
+Releases](https://github.com/akiojin/unity-cli/releases), ou installez-le
+depuis un clone local:
+
 ```bash
-cargo install unity-cli
+git clone https://github.com/akiojin/unity-cli.git
+cd unity-cli
+cargo install --path .
 ```
 
 URL du package UPM cote Unity:

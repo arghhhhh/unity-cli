@@ -14,13 +14,12 @@ Before running any Unity command, ensure `unity-cli` is available:
 
 ```bash
 if ! command -v unity-cli >/dev/null 2>&1; then
-  if command -v cargo >/dev/null 2>&1; then
-    cargo install unity-cli
-    hash -r
-  elif [ -f Cargo.toml ] && grep -q '^name = "unity-cli"' Cargo.toml; then
+  if [ -f Cargo.toml ] && grep -q '^name = "unity-cli"' Cargo.toml; then
     echo "unity-cli is not installed globally. Use: cargo run -- <args>"
   else
-    echo "Install Rust first: https://rustup.rs"
+    echo "unity-cli is not installed."
+    echo "Install a release binary from https://github.com/akiojin/unity-cli/releases"
+    echo "or clone the repo and run: cargo install --path ."
     exit 1
   fi
 fi

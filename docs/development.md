@@ -400,10 +400,10 @@ bash scripts/sync-constitution.sh --check
 
 ## Release Flow
 
-1. Update versions: `node scripts/release/update-versions.mjs <X.Y.Z>`
-2. Tag: `vX.Y.Z`
-3. Push tag and run `.github/workflows/unity-cli-release.yml`
-4. Publish crate: `cargo publish`
+1. Run `./scripts/publish.sh <major|minor|patch>`
+2. Confirm the new `vX.Y.Z` tag was pushed
+3. Verify `.github/workflows/release.yml` uploaded the release binaries
+4. Verify the crate is available on crates.io
 
 Detailed steps: `RELEASE.md`.
 
@@ -861,10 +861,10 @@ bash scripts/sync-constitution.sh --check
 
 ## リリースフロー
 
-1. `node scripts/release/update-versions.mjs <X.Y.Z>` でバージョン同期
-2. `vX.Y.Z` タグ作成
-3. `.github/workflows/unity-cli-release.yml` でバイナリ公開
-4. `cargo publish` で crates.io 公開
+1. `./scripts/publish.sh <major|minor|patch>` を実行
+2. 新しい `vX.Y.Z` タグが push されたことを確認
+3. `.github/workflows/release.yml` でバイナリが公開されたことを確認
+4. crates.io で crate が公開されたことを確認
 
 詳細は `RELEASE.md` を参照してください。
 
