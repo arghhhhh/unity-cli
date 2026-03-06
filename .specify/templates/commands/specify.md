@@ -119,7 +119,7 @@ $ARGUMENTS
 
 ## 注意
 
-- 要件IDは `specs/SPEC-xxxxxxxx/` で管理します（Speckitはブランチを作成しません）。
+- SPEC ID は `gwt-spec` ラベル付き GitHub Issue 番号を使用します（Speckitはブランチを作成しません）。
 - 合理的なデフォルトを使用し、不要な質問は避ける:
   - データ保持: 業界標準
   - パフォーマンス: 標準的なWebアプリの期待値

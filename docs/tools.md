@@ -1,13 +1,13 @@
 # Tool Catalog
 
-Snapshot date: `2026-02-23`
+Snapshot date: `2026-03-06`
 
 ## Command Groups (Typed Subcommands)
 
 | Group | Subcommands |
 | --- | --- |
 | `raw` | (direct tool invocation) |
-| `tool` | `list`, `call` |
+| `tool` | `list`, `schema`, `call` |
 | `system` | `ping` |
 | `scene` | `create` |
 | `instances` | `list`, `set-active` |
@@ -17,6 +17,11 @@ Snapshot date: `2026-02-23`
 | `batch` | (batch command execution) |
 
 Use `raw` for full command coverage when no typed subcommand exists.
+
+Global options:
+
+- `--output text|json`
+- `--dry-run` (skip mutating tools and return execution plan)
 
 ## Unity Tool APIs (101 tools)
 
@@ -209,9 +214,35 @@ These tools run locally via Rust and do not require a TCP connection to Unity Ed
 - `find_symbol` — Find symbol definitions
 - `find_refs` — Find symbol references
 
+## Schema Notes
+
+- `load_scene`:
+  - exactly one of `scenePath` / `sceneName` is required (`oneOf`)
+- `delete_gameobject`:
+  - at least one of `path` / `paths` is required (`anyOf`)
+- `input_keyboard`:
+  - one of `action` (single action) or `actions` (batch) is required (`anyOf`)
+- Action-based tools:
+  - action-specific required fields are enforced via schema variants (`oneOf`)
+  - examples:
+    - `manage_layers` action `add` requires `layerName`
+    - `package_manager` action `search` requires `keyword`
+    - `addressables_manage` action `move_entry` requires `targetGroupName`
+    - `execute_menu_item` action `get_available_menus` does not require `menuPath`
+
+Examples:
+
+```bash
+unity-cli tool schema load_scene --output json
+unity-cli tool schema delete_gameobject --output json
+unity-cli tool schema input_keyboard --output json
+unity-cli tool schema package_manager --output json
+```
+
 ## Regenerate This Catalog
 
 ```bash
 unity-cli --help
 unity-cli tool list --host 127.0.0.1 --port 6400 --output json | jq -r '.[]'
+unity-cli tool schema create_scene --output json
 ```

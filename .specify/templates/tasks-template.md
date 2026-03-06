@@ -5,7 +5,7 @@ description: "機能実装のタスクリストテンプレート"
 
 # タスク: [機能名]
 
-**入力**: `/specs/SPEC-[UUID8桁]/` の設計ドキュメント  
+**入力**: `gwt-spec` ラベル付き GitHub Issue の `Plan` / `Research` / `Data Model` / `Contracts` セクション  
 **前提条件**: plan.md（必須）, spec.md（必須: ユーザーストーリー）, research.md, data-model.md, contracts/
 
 **テスト**: 下の例にはテストタスクを含みます。テストの有無は仕様やユーザー指示に従って調整してください。

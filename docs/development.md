@@ -10,7 +10,7 @@ This document covers internal development workflow for `unity-cli`.
 - Unity bridge package: `UnityCliBridge/Packages/unity-cli-bridge`
 - Unity test project: `UnityCliBridge`
 - C# LSP: `lsp/`
-- Spec workflow: `.specify/` + `specs/`
+- Spec workflow: GitHub Issue-first (`gwt-spec`) + `.specify/` tooling
 
 ## Prerequisites
 
@@ -92,7 +92,9 @@ Typed examples:
 - `unity-cli instances list`
 - `unity-cli instances set-active --name "<instance>"`
 - `unity-cli tool list`
+- `unity-cli tool schema <tool_name> --output json`
 - `unity-cli tool call <tool_name> --json '{...}'`
+- `unity-cli --dry-run tool call <tool_name> --json '{...}'`
 - `unity-cli unityd start` / `stop` / `status`
 - `unity-cli batch --json '[{"tool":"ping","params":{}},{"tool":"get_editor_state","params":{}}]'`
 
@@ -101,6 +103,11 @@ Raw example:
 ```bash
 unity-cli raw create_gameobject --json '{"name":"Player"}'
 ```
+
+Parameter validation is strict by default for tools with explicit schemas.
+Unknown keys, missing required fields, and type mismatches are rejected before execution.
+`oneOf` / `anyOf` constraints are also enforced (e.g. `load_scene`, `delete_gameobject`, `input_keyboard`).
+For action-based tools, required fields are validated per action variant (e.g. `package_manager` search requires `keyword`, `manage_layers` add requires `layerName`).
 
 Local (Rust-side) tools that do not require Unity TCP roundtrip:
 
@@ -379,8 +386,8 @@ git diff --no-index .specify/scripts/bash .specify/upstream/spec-kit-<TAG>/scrip
 
 - Japanese localization for `.claude/commands/speckit.*.md` and `.specify/templates/*`
 - No branch/worktree creation in Speckit flow
-- Spec ID format: `specs/SPEC-[UUID8]`
-- `specs/specs.md` generation remains enabled
+- Use GitHub Issue number as SPEC ID (`gwt-spec` label)
+- Do not create new `specs/SPEC-*` directories
 
 1. Validate:
 
@@ -456,7 +463,7 @@ Periodically verify that specs and docs match the current implementation.
 
 ## Baseline Policy
 
-The Unity-side codebase uses `unity-mcp-server` as its base copy. Differences are limited to changes required for the MCP → CLI migration. For the full policy and diff inventory, see [`specs/SPEC-83d9d7ee/baseline-policy.md`](../specs/SPEC-83d9d7ee/baseline-policy.md).
+The Unity-side codebase uses `unity-mcp-server` as its base copy. Differences are limited to changes required for the MCP → CLI migration. For migration policy and diff notes, see [`specs/migration-notes.md`](../specs/migration-notes.md).
 
 ---
 
@@ -470,7 +477,7 @@ The Unity-side codebase uses `unity-mcp-server` as its base copy. Differences ar
 - Unity連携パッケージ: `UnityCliBridge/Packages/unity-cli-bridge`
 - Unityテストプロジェクト: `UnityCliBridge`
 - C# LSP: `lsp/`
-- Specワークフロー: `.specify/` + `specs/`
+- Specワークフロー: GitHub Issue-first（`gwt-spec`）+ `.specify/` 補助ツール
 
 ## 前提条件
 
@@ -552,7 +559,9 @@ typed 例:
 - `unity-cli instances list`
 - `unity-cli instances set-active --name "<instance>"`
 - `unity-cli tool list`
+- `unity-cli tool schema <tool_name> --output json`
 - `unity-cli tool call <tool_name> --json '{...}'`
+- `unity-cli --dry-run tool call <tool_name> --json '{...}'`
 - `unity-cli unityd start` / `stop` / `status`
 - `unity-cli batch --json '[{"tool":"ping","params":{}},{"tool":"get_editor_state","params":{}}]'`
 
@@ -561,6 +570,11 @@ raw 例:
 ```bash
 unity-cli raw create_gameobject --json '{"name":"Player"}'
 ```
+
+明示スキーマを持つツールはデフォルトで厳格バリデーションされます。
+未知キー、必須不足、型不一致は実行前にエラーになります。
+`oneOf` / `anyOf` 制約（例: `load_scene`, `delete_gameobject`, `input_keyboard`）も実行前に検証されます。
+action 付きツールは action ごとの必須項目も実行前に検証されます（例: `package_manager` の search では `keyword` 必須、`manage_layers` の add では `layerName` 必須）。
 
 Unity TCP を介さずローカル実行される Rust 側ツール:
 
@@ -833,8 +847,8 @@ git diff --no-index .specify/scripts/bash .specify/upstream/spec-kit-<TAG>/scrip
 
 - `.claude/commands/speckit.*.md` と `.specify/templates/*` の日本語維持
 - Speckit フローでブランチ/worktree を作成しない
-- Spec ID 形式: `specs/SPEC-[UUID8]`
-- `specs/specs.md` 自動生成を維持
+- SPEC ID は GitHub Issue 番号（`gwt-spec`）
+- 新規 `specs/SPEC-*` ディレクトリは作成しない
 
 1. 検証:
 
@@ -899,4 +913,4 @@ bash scripts/sync-constitution.sh --check
 
 ## ベースライン方針
 
-Unity 側コードベースは `unity-mcp-server` をベースコピーとし、差分は MCP→CLI 移行に必要な変更に限定します。方針の全文と差分一覧は [`specs/SPEC-83d9d7ee/baseline-policy.md`](../specs/SPEC-83d9d7ee/baseline-policy.md) を参照してください。
+Unity 側コードベースは `unity-mcp-server` をベースコピーとし、差分は MCP→CLI 移行に必要な変更に限定します。方針と差分の記録は [`specs/migration-notes.md`](../specs/migration-notes.md) を参照してください。

@@ -51,4 +51,5 @@ $ARGUMENTS
 
 ## 注意
 
-- Speckitは**Gitブランチを作成しません**（要件は `specs/SPEC-xxxxxxxx/` で管理します）。
+- Speckitは**Gitブランチを作成しません**。
+- このコマンドはローカル `specs/` 互換運用向けです。新規要件の正規フローは `gwt-spec` ラベル付き GitHub Issue（Issue-first）を使用してください。
