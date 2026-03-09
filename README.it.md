@@ -52,7 +52,15 @@ cd unity-cli
 cargo install --path .
 ```
 
-URL del pacchetto UPM lato Unity:
+Pacchetto bridge lato Unity (scegli un'opzione):
+
+**OpenUPM** (consigliato):
+
+```bash
+openupm add com.akiojin.unity-cli-bridge
+```
+
+**Git URL** (Unity Package Manager):
 
 ```text
 https://github.com/akiojin/unity-cli.git?path=UnityCliBridge/Packages/unity-cli-bridge
