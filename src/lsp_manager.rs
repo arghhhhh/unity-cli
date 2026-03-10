@@ -11,6 +11,8 @@ use sha2::{Digest, Sha256};
 use ureq::Agent;
 
 const DOWNLOAD_TIMEOUT_SECS: u64 = 30;
+const HTTP_MAX_ATTEMPTS: usize = 3;
+const HTTP_RETRY_BASE_DELAY_MILLIS: u64 = 250;
 const USER_AGENT_VALUE: &str = "unity-cli";
 const MANIFEST_REPOS: &[&str] = &["akiojin/unity-cli"];
 const GITHUB_TOKEN_ENV_VARS: &[&str] = &["GITHUB_TOKEN", "GH_TOKEN"];
@@ -259,23 +261,54 @@ fn http_client() -> Result<Agent> {
 
 fn get_response(url: &str) -> Result<ureq::Response> {
     let client = http_client()?;
-    let mut request = client.get(url).set("User-Agent", USER_AGENT_VALUE);
+    let token = github_token_from_env();
+    let mut last_error = None;
 
-    if let Some(token) = github_token_from_env() {
-        request = request.set("Authorization", &format!("Bearer {token}"));
-    }
-
-    match request.call() {
-        Ok(response) => Ok(response),
-        Err(ureq::Error::Status(status, response)) => {
-            let body = response
-                .into_string()
-                .map(|body| format!(" body={body}"))
-                .unwrap_or_default();
-            Err(anyhow!("HTTP {status} for {url}{body}"))
+    for attempt in 1..=HTTP_MAX_ATTEMPTS {
+        let mut request = client.get(url).set("User-Agent", USER_AGENT_VALUE);
+        if let Some(token) = token.as_deref() {
+            request = request.set("Authorization", &format!("Bearer {token}"));
         }
-        Err(error) => Err(anyhow!("Failed to request {url}: {error}")),
+
+        match request.call() {
+            Ok(response) => return Ok(response),
+            Err(ureq::Error::Status(status, response)) => {
+                let body = response
+                    .into_string()
+                    .map(|body| format!(" body={body}"))
+                    .unwrap_or_default();
+                let error = anyhow!("HTTP {status} for {url}{body}");
+                if attempt < HTTP_MAX_ATTEMPTS && is_retryable_status(status) {
+                    last_error = Some(error);
+                    sleep_before_retry(attempt);
+                    continue;
+                }
+                return Err(error);
+            }
+            Err(ureq::Error::Transport(error)) => {
+                let error = anyhow!("Failed to request {url}: {error}");
+                if attempt < HTTP_MAX_ATTEMPTS {
+                    last_error = Some(error);
+                    sleep_before_retry(attempt);
+                    continue;
+                }
+                return Err(error);
+            }
+        }
     }
+
+    Err(last_error.unwrap_or_else(|| anyhow!("Failed to request {url}: unknown error")))
+}
+
+fn is_retryable_status(status: u16) -> bool {
+    status == 408 || status == 429 || (500..=599).contains(&status)
+}
+
+fn sleep_before_retry(attempt: usize) {
+    let backoff_multiplier = 1_u64 << attempt.saturating_sub(1);
+    std::thread::sleep(Duration::from_millis(
+        HTTP_RETRY_BASE_DELAY_MILLIS * backoff_multiplier,
+    ));
 }
 
 fn github_token_from_env() -> Option<String> {
@@ -401,6 +434,41 @@ mod tests {
         (format!("http://127.0.0.1:{port}/"), captured, handle)
     }
 
+    fn run_http_server_sequence(
+        responses: &[(&str, &str)],
+    ) -> (String, Arc<Mutex<usize>>, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener should expose local addr")
+            .port();
+        let request_count = Arc::new(Mutex::new(0_usize));
+        let request_count_for_thread = Arc::clone(&request_count);
+        let responses = responses
+            .iter()
+            .map(|(status, body)| ((*status).to_string(), (*body).to_string()))
+            .collect::<Vec<_>>();
+        let handle = thread::spawn(move || {
+            for (status, body) in responses {
+                let (mut stream, _) = listener.accept().expect("accept should succeed");
+                let mut buf = [0_u8; 1024];
+                let _ = stream.read(&mut buf);
+                *request_count_for_thread
+                    .lock()
+                    .expect("request count lock should succeed") += 1;
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n{body}",
+                    len = body.len()
+                );
+                stream
+                    .write_all(response.as_bytes())
+                    .expect("response write should succeed");
+                stream.flush().expect("response flush should succeed");
+            }
+        });
+        (format!("http://127.0.0.1:{port}/"), request_count, handle)
+    }
+
     #[test]
     fn tools_root_prefers_unity_cli_tools_root_env() {
         let _guard = env_lock()
@@ -507,7 +575,11 @@ mod tests {
 
     #[test]
     fn get_response_reports_http_status_errors() {
-        let (url, handle) = run_http_server_once("500 Internal Server Error", "{\"ok\":false}");
+        let (url, _request_count, handle) = run_http_server_sequence(&[
+            ("500 Internal Server Error", "{\"ok\":false}"),
+            ("500 Internal Server Error", "{\"ok\":false}"),
+            ("500 Internal Server Error", "{\"ok\":false}"),
+        ]);
         let error = get_response(&url).expect_err("HTTP 500 should fail");
         handle.join().expect("server thread should complete");
         assert!(error.to_string().contains("HTTP 500"));
@@ -541,5 +613,28 @@ mod tests {
         handle.join().expect("server thread should complete");
         assert!(error.to_string().contains("HTTP 403"));
         assert!(error.to_string().contains("forbidden"));
+    }
+
+    #[test]
+    fn get_json_retries_transient_server_error() {
+        let (url, request_count, handle) = run_http_server_sequence(&[
+            (
+                "500 Internal Server Error",
+                "{\"message\":\"server error\"}",
+            ),
+            ("200 OK", "{\"tag_name\":\"v1.2.3\"}"),
+        ]);
+
+        let release: ReleaseInfo =
+            get_json(&url).expect("transient HTTP 500 should be retried successfully");
+
+        handle.join().expect("server thread should complete");
+        assert_eq!(release.tag_name, "v1.2.3");
+        assert_eq!(
+            *request_count
+                .lock()
+                .expect("request count lock should succeed"),
+            2
+        );
     }
 }

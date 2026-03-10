@@ -238,6 +238,42 @@ sealed class LspServer
             await WriteMessageAsync(new { jsonrpc = "2.0", id = id.GetInt32(), result });
             return;
         }
+        if (method == "unitycli/writeCSharpFile")
+        {
+            var p = root.GetProperty("params");
+            var relative = p.GetProperty("relative").GetString() ?? "";
+            var newText = p.GetProperty("newText").GetString() ?? "";
+            var validate = !p.TryGetProperty("validate", out var v) || v.GetBoolean();
+            var apply = !p.TryGetProperty("apply", out var a4) || a4.GetBoolean();
+            var format = p.TryGetProperty("format", out var f0) && f0.GetBoolean();
+            var result = await WriteCSharpFileAsync(relative, newText, validate, apply, format);
+            await WriteMessageAsync(new { jsonrpc = "2.0", id = id.GetInt32(), result });
+            return;
+        }
+        if (method == "unitycli/createCSharpFile")
+        {
+            var p = root.GetProperty("params");
+            var relative = p.GetProperty("relative").GetString() ?? "";
+            var text = p.GetProperty("text").GetString() ?? "";
+            var overwrite = p.TryGetProperty("overwrite", out var ow) && ow.GetBoolean();
+            var validate = !p.TryGetProperty("validate", out var v2) || v2.GetBoolean();
+            var apply = !p.TryGetProperty("apply", out var a5) || a5.GetBoolean();
+            var format = p.TryGetProperty("format", out var f2) && f2.GetBoolean();
+            var result = await CreateCSharpFileAsync(relative, text, overwrite, validate, apply, format);
+            await WriteMessageAsync(new { jsonrpc = "2.0", id = id.GetInt32(), result });
+            return;
+        }
+        if (method == "unitycli/applyCSharpEdits")
+        {
+            var p = root.GetProperty("params");
+            var files = p.GetProperty("files");
+            var validate = !p.TryGetProperty("validate", out var v3) || v3.GetBoolean();
+            var apply = !p.TryGetProperty("apply", out var a6) || a6.GetBoolean();
+            var format = p.TryGetProperty("format", out var f1) && f1.GetBoolean();
+            var result = await ApplyCSharpEditsAsync(files, validate, apply, format);
+            await WriteMessageAsync(new { jsonrpc = "2.0", id = id.GetInt32(), result });
+            return;
+        }
         if (method == "unitycli/removeSymbol")
         {
             var p = root.GetProperty("params");
@@ -302,44 +338,8 @@ sealed class LspServer
                 var text = await File.ReadAllTextAsync(path);
                 var tree = CSharpSyntaxTree.ParseText(text);
                 var root = await tree.GetRootAsync();
-                var list = new List<object>();
-                foreach (var node in root.DescendantNodes())
-                {
-                    if (node is NamespaceDeclarationSyntax ns)
-                    {
-                        list.Add(MakeSym(ns.Name.ToString(), 3, node));
-                    }
-                    else if (node is ClassDeclarationSyntax c)
-                    {
-                        list.Add(MakeSym(c.Identifier.ValueText, 5, node));
-                    }
-                    else if (node is StructDeclarationSyntax s)
-                    {
-                        list.Add(MakeSym(s.Identifier.ValueText, 23, node));
-                    }
-                    else if (node is InterfaceDeclarationSyntax i)
-                    {
-                        list.Add(MakeSym(i.Identifier.ValueText, 11, node));
-                    }
-                    else if (node is EnumDeclarationSyntax e)
-                    {
-                        list.Add(MakeSym(e.Identifier.ValueText, 10, node));
-                    }
-                    else if (node is MethodDeclarationSyntax m)
-                    {
-                        list.Add(MakeSym(m.Identifier.ValueText, 6, node));
-                    }
-                    else if (node is PropertyDeclarationSyntax p)
-                    {
-                        list.Add(MakeSym(p.Identifier.ValueText, 7, node));
-                    }
-                    else if (node is FieldDeclarationSyntax f)
-                    {
-                        var v = f.Declaration.Variables.FirstOrDefault();
-                        if (v != null) list.Add(MakeSym(v.Identifier.ValueText, 8, node));
-                    }
-                }
-                return list;
+                var relative = ToRel(path, _rootDir);
+                return CollectEntries(root, relative).Select(MakeSym).ToArray();
             }
             finally
             {
@@ -365,28 +365,19 @@ sealed class LspServer
                     var text = await File.ReadAllTextAsync(file);
                     var tree = CSharpSyntaxTree.ParseText(text);
                     var root = await tree.GetRootAsync();
-                    foreach (var node in root.DescendantNodes())
+                    foreach (var entry in CollectEntries(root, ToRel(file, _rootDir)))
                     {
-                        (int kind, string name) = node switch
-                        {
-                            ClassDeclarationSyntax c => (5, c.Identifier.ValueText),
-                            StructDeclarationSyntax s => (23, s.Identifier.ValueText),
-                            InterfaceDeclarationSyntax i => (11, i.Identifier.ValueText),
-                            EnumDeclarationSyntax e => (10, e.Identifier.ValueText),
-                            MethodDeclarationSyntax m => (6, m.Identifier.ValueText),
-                            PropertyDeclarationSyntax p => (7, p.Identifier.ValueText),
-                            FieldDeclarationSyntax f => (8, f.Declaration.Variables.FirstOrDefault()?.Identifier.ValueText ?? ""),
-                            _ => (0, "")
-                        };
-                        if (kind == 0 || string.IsNullOrEmpty(name)) continue;
-                        if (name.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0) continue;
-                        var span = node.GetLocation().GetLineSpan();
-                        var start = new { line = span.StartLinePosition.Line, character = span.StartLinePosition.Character };
-                        var end = new { line = span.EndLinePosition.Line, character = span.EndLinePosition.Character };
+                        if (SymbolKindCode(entry.Kind) == 0 || string.IsNullOrEmpty(entry.Name)) continue;
+                        if (entry.Name.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                        var start = new { line = Math.Max(entry.Line - 1, 0), character = Math.Max(entry.Column - 1, 0) };
+                        var end = start;
                         results.Add(new
                         {
-                            name,
-                            kind,
+                            name = entry.Name,
+                            kind = SymbolKindCode(entry.Kind),
+                            kindName = entry.Kind,
+                            namePath = NormalizeNamePath(entry.NamePath),
+                            containerName = ContainerName(entry.NamePath),
                             location = new { uri = Path2Uri(file), range = new { start, end } }
                         });
                     }
@@ -521,7 +512,7 @@ sealed class LspServer
     private async Task<object> RenameByNamePathAsync(string relative, string namePath, string newName, bool apply)
     {
         var full = Path.Combine(_rootDir, relative.Replace('/', Path.DirectorySeparatorChar));
-        if (!File.Exists(full)) return new { success = false, applied = false, error = "file_not_found" };
+        if (!File.Exists(full)) return EditResult(false, false, reason: "file_not_found");
         try
         {
             var handle = await AcquireFileLockAsync(full);
@@ -530,8 +521,9 @@ sealed class LspServer
             var text = await File.ReadAllTextAsync(full);
             var tree = CSharpSyntaxTree.ParseText(text);
             var root = await tree.GetRootAsync();
-            var segments = (namePath ?? "").Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            if (segments.Length == 0) return new { success = false, applied = false, error = "invalid_namePath" };
+            var normalizedNamePath = NormalizeNamePath(namePath);
+            var segments = normalizedNamePath.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (segments.Length == 0) return EditResult(false, false, reason: "invalid_namePath");
             SyntaxNode cursor = root;
             for (int i = 0; i < segments.Length - 1; i++)
             {
@@ -540,10 +532,14 @@ sealed class LspServer
                                                                       || n is StructDeclarationSyntax s && s.Identifier.ValueText == seg
                                                                       || n is InterfaceDeclarationSyntax ii && ii.Identifier.ValueText == seg
                                                                       || n is EnumDeclarationSyntax en && en.Identifier.ValueText == seg);
-                if (next is null) return new { success = false, applied = false, error = "container_not_found", segment = seg };
+                if (next is null) return EditResult(false, false, reason: "container_not_found");
                 cursor = next;
             }
             var targetName = segments[^1];
+            if (string.Equals(targetName, newName, StringComparison.Ordinal))
+            {
+                return EditResult(false, false, reason: "no_change");
+            }
             SyntaxNode? decl = cursor.DescendantNodes().FirstOrDefault(n => n is ClassDeclarationSyntax c && c.Identifier.ValueText == targetName
                                                                           || n is StructDeclarationSyntax s && s.Identifier.ValueText == targetName
                                                                           || n is InterfaceDeclarationSyntax ii && ii.Identifier.ValueText == targetName
@@ -551,7 +547,7 @@ sealed class LspServer
                              ?? cursor.DescendantNodes().FirstOrDefault(n => n is MethodDeclarationSyntax m && m.Identifier.ValueText == targetName
                                                                           || n is PropertyDeclarationSyntax p && p.Identifier.ValueText == targetName
                                                                           || n is FieldDeclarationSyntax f && f.Declaration.Variables.Any(v => v.Identifier.ValueText == targetName));
-            if (decl is null) return new { success = false, applied = false, error = "symbol_not_found" };
+            if (decl is null) return EditResult(false, false, reason: "symbol_not_found");
 
             // Replace identifier token text (declaration only)
             SyntaxNode newRoot = root;
@@ -621,27 +617,40 @@ sealed class LspServer
             }
             if (conflict)
             {
-                return new { success = false, applied = false, error = "name_conflict" };
+                return EditResult(false, false, reason: "name_conflict");
             }
 
             // Extend rename: if type/member, update identifier usages across workspace within matching containers
             bool isTypeDecl = decl is ClassDeclarationSyntax || decl is StructDeclarationSyntax || decl is InterfaceDeclarationSyntax || decl is EnumDeclarationSyntax;
             bool isMemberDecl = decl is MethodDeclarationSyntax || decl is PropertyDeclarationSyntax || decl is FieldDeclarationSyntax;
+            var newSymbolPath = string.Join('/', segments.Take(segments.Length - 1).Append(newName));
             if (!(isTypeDecl || isMemberDecl))
             {
                 var newText = newRoot.ToFullString();
+                if (newText == text) return EditResult(false, false, reason: "no_change");
                 if (apply)
                 {
                     await File.WriteAllTextAsync(full, newText, Encoding.UTF8);
-                    return new { success = true, applied = true };
+                    return EditResult(
+                        true,
+                        true,
+                        changedFiles: new[] { NormalizeRelative(relative) },
+                        changedSymbols: new[] { NormalizeNamePath(newSymbolPath) });
                 }
-                return new { success = true, applied = false, preview = DiffPreview(text, newText) };
+                return EditResult(
+                    true,
+                    false,
+                    changedFiles: new[] { NormalizeRelative(relative) },
+                    changedSymbols: new[] { NormalizeNamePath(newSymbolPath) },
+                    diffPreview: BuildDiffPreviewEntries(new[] { (relative, text, newText) }),
+                    reason: "preview_only");
             }
 
             var containers = segments.Take(segments.Length - 1).ToArray();
             var nsTarget = GetNamespaceChain(decl);
             var oldName = targetName;
             var updatedFiles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [full] = newRoot.ToFullString() };
+            var originalByFile = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [full] = text };
             foreach (var file in EnumerateUnityCsFiles(_rootDir))
             {
                 // Member rename is limited to the declaration file; type rename updates across workspace
@@ -656,7 +665,7 @@ sealed class LspServer
                         var r = await t.GetRootAsync();
                         var tokens = r.DescendantTokens().Where(tk => tk.IsKind(SyntaxKind.IdentifierToken) && tk.ValueText == oldName).ToArray();
                         if (tokens.Length == 0) continue;
-                        bool changed = false;
+                        bool fileChanged = false;
                         SyntaxNode rr = r;
                         foreach (var tk in tokens)
                         {
@@ -675,18 +684,22 @@ sealed class LspServer
                             if (isTypeDecl)
                             {
                                 rr = rr.ReplaceToken(tk, SyntaxFactory.Identifier(newName).WithTriviaFrom(tk));
-                                changed = true;
+                                fileChanged = true;
                             }
                             else if (isMemberDecl)
                             {
                                 if (tk.Parent is IdentifierNameSyntax)
                                 {
                                     rr = rr.ReplaceToken(tk, SyntaxFactory.Identifier(newName).WithTriviaFrom(tk));
-                                    changed = true;
+                                    fileChanged = true;
                                 }
                             }
                         }
-                        if (changed) updatedFiles[file] = rr.ToFullString();
+                        if (fileChanged)
+                        {
+                            updatedFiles[file] = rr.ToFullString();
+                            originalByFile[file] = src;
+                        }
                     }
                     finally
                     {
@@ -695,6 +708,14 @@ sealed class LspServer
                 }
                 catch { }
             }
+            var changed = updatedFiles
+                .Where(kv => !string.Equals(originalByFile[kv.Key], kv.Value, StringComparison.Ordinal))
+                .ToArray();
+            if (changed.Length == 0)
+            {
+                return EditResult(false, false, reason: "no_change");
+            }
+            var changedFiles = changed.Select(kv => NormalizeRelative(ToRel(kv.Key, _rootDir))).ToArray();
             if (apply)
             {
                 var filesToLock = updatedFiles.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase).ToArray();
@@ -712,9 +733,23 @@ sealed class LspServer
                 {
                     foreach (var l in locks) l.Dispose();
                 }
-                return new { success = true, applied = true, updated = updatedFiles.Count };
+                return EditResult(
+                    true,
+                    true,
+                    changedFiles: changedFiles,
+                    changedSymbols: new[] { NormalizeNamePath(newSymbolPath) });
             }
-            return new { success = true, applied = false, preview = DiffPreview(text, updatedFiles.Values.FirstOrDefault() ?? newRoot.ToFullString()) };
+            return EditResult(
+                true,
+                false,
+                changedFiles: changedFiles,
+                changedSymbols: new[] { NormalizeNamePath(newSymbolPath) },
+                diffPreview: BuildDiffPreviewEntries(changed.Select(kv => (
+                    ToRel(kv.Key, _rootDir),
+                    originalByFile[kv.Key],
+                    kv.Value
+                ))),
+                reason: "preview_only");
             }
             finally
             {
@@ -723,7 +758,7 @@ sealed class LspServer
         }
         catch (Exception ex)
         {
-            return new { success = false, applied = false, error = ex.Message };
+            return EditResult(false, false, reason: ex.Message);
         }
     }
 
@@ -732,6 +767,78 @@ sealed class LspServer
         // Minimal diff: return new text truncated
         if (newText.Length > 1000) return newText.Substring(0, 1000) + "…";
         return newText;
+    }
+
+    private static string NormalizeRelative(string relative)
+    {
+        return (relative ?? string.Empty).Replace('\\', '/');
+    }
+
+    private static string MaybeFormatText(string text, bool format)
+    {
+        if (!format) return text;
+        var tree = CSharpSyntaxTree.ParseText(text);
+        return tree.GetRoot().NormalizeWhitespace().ToFullString();
+    }
+
+    private static List<Dictionary<string, object?>> CollectSyntaxDiagnostics(string text)
+    {
+        var tree = CSharpSyntaxTree.ParseText(text ?? string.Empty);
+        var diagnostics = new List<Dictionary<string, object?>>();
+        foreach (var diag in tree.GetDiagnostics())
+        {
+            var span = diag.Location.GetLineSpan();
+            diagnostics.Add(new Dictionary<string, object?>
+            {
+                ["severity"] = diag.Severity.ToString().ToLowerInvariant(),
+                ["id"] = diag.Id,
+                ["message"] = diag.GetMessage(),
+                ["line"] = span.StartLinePosition.Line + 1,
+                ["column"] = span.StartLinePosition.Character + 1
+            });
+        }
+        return diagnostics;
+    }
+
+    private static bool HasErrorDiagnostics(IEnumerable<Dictionary<string, object?>> diagnostics)
+    {
+        return diagnostics.Any(diag =>
+        {
+            diag.TryGetValue("severity", out var severity);
+            return string.Equals(severity?.ToString(), "error", StringComparison.OrdinalIgnoreCase);
+        });
+    }
+
+    private static object[] BuildDiffPreviewEntries(IEnumerable<(string path, string originalText, string newText)> changes)
+    {
+        return changes
+            .Select(change => (object)new Dictionary<string, object?>
+            {
+                ["path"] = NormalizeRelative(change.path),
+                ["preview"] = DiffPreview(change.originalText, change.newText)
+            })
+            .ToArray();
+    }
+
+    private static Dictionary<string, object?> EditResult(
+        bool success,
+        bool applied,
+        IEnumerable<string>? changedFiles = null,
+        IEnumerable<string>? changedSymbols = null,
+        IEnumerable<object>? diagnostics = null,
+        IEnumerable<object>? diffPreview = null,
+        string? reason = null)
+    {
+        return new Dictionary<string, object?>
+        {
+            ["success"] = success,
+            ["applied"] = applied,
+            ["changedFiles"] = (changedFiles ?? Array.Empty<string>()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+            ["changedSymbols"] = (changedSymbols ?? Array.Empty<string>()).Distinct(StringComparer.Ordinal).ToArray(),
+            ["diagnostics"] = (diagnostics ?? Array.Empty<object>()).ToArray(),
+            ["diffPreview"] = (diffPreview ?? Array.Empty<object>()).ToArray(),
+            ["reason"] = reason
+        };
     }
 
     private async Task<object> ValidateTextEditsAsync(string relative, string newText)
@@ -755,34 +862,21 @@ sealed class LspServer
                     }
                 }
             }
-            var tree = CSharpSyntaxTree.ParseText(text);
-            var diagnostics = tree.GetDiagnostics();
-            var list = new List<object>();
-            foreach (var diag in diagnostics)
-            {
-                var span = diag.Location.GetLineSpan();
-                list.Add(new
-                {
-                    severity = diag.Severity.ToString().ToLowerInvariant(),
-                    id = diag.Id,
-                    message = diag.GetMessage(),
-                    line = span.StartLinePosition.Line + 1,
-                    column = span.StartLinePosition.Character + 1
-                });
-            }
-            return new { diagnostics = list };
+            return new { diagnostics = CollectSyntaxDiagnostics(text) };
         }
         catch (Exception ex)
         {
-            var errorList = new List<object>();
-            errorList.Add(new
+            var errorList = new List<object>
             {
-                severity = "error",
-                id = "validateTextEdits",
-                message = ex.Message,
-                line = 0,
-                column = 0
-            });
+                new Dictionary<string, object?>
+                {
+                    ["severity"] = "error",
+                    ["id"] = "validateTextEdits",
+                    ["message"] = ex.Message,
+                    ["line"] = 0,
+                    ["column"] = 0
+                }
+            };
             return new
             {
                 diagnostics = errorList,
@@ -791,25 +885,202 @@ sealed class LspServer
         }
     }
 
+    private async Task<object> WriteCSharpFileAsync(string relative, string newText, bool validate, bool apply, bool format)
+    {
+        var full = Path.Combine(_rootDir, relative.Replace('/', Path.DirectorySeparatorChar));
+        if (!File.Exists(full)) return EditResult(false, false, reason: "file_not_found");
+
+        var handle = await AcquireFileLockAsync(full);
+        try
+        {
+            var original = await File.ReadAllTextAsync(full);
+            var updated = MaybeFormatText(newText ?? string.Empty, format);
+            var diagnostics = validate ? CollectSyntaxDiagnostics(updated).Cast<object>().ToArray() : Array.Empty<object>();
+            if (validate && HasErrorDiagnostics(diagnostics.Cast<Dictionary<string, object?>>()))
+            {
+                return EditResult(false, false, diagnostics: diagnostics, reason: "validation_failed");
+            }
+            if (updated == original)
+            {
+                return EditResult(false, false, diagnostics: diagnostics, reason: "no_change");
+            }
+            if (!apply)
+            {
+                return EditResult(
+                    true,
+                    false,
+                    changedFiles: new[] { NormalizeRelative(relative) },
+                    diagnostics: diagnostics,
+                    diffPreview: BuildDiffPreviewEntries(new[] { (relative, original, updated) }),
+                    reason: "preview_only");
+            }
+
+            await File.WriteAllTextAsync(full, updated, Encoding.UTF8);
+            return EditResult(
+                true,
+                true,
+                changedFiles: new[] { NormalizeRelative(relative) },
+                diagnostics: diagnostics);
+        }
+        finally
+        {
+            handle.Dispose();
+        }
+    }
+
+    private async Task<object> CreateCSharpFileAsync(string relative, string text, bool overwrite, bool validate, bool apply, bool format)
+    {
+        var full = Path.Combine(_rootDir, relative.Replace('/', Path.DirectorySeparatorChar));
+        var exists = File.Exists(full);
+        if (exists && !overwrite) return EditResult(false, false, reason: "file_exists");
+
+        var original = exists ? await File.ReadAllTextAsync(full) : string.Empty;
+        var normalizedText = MaybeFormatText(text ?? string.Empty, format);
+        var diagnostics = validate ? CollectSyntaxDiagnostics(normalizedText).Cast<object>().ToArray() : Array.Empty<object>();
+        if (validate && HasErrorDiagnostics(diagnostics.Cast<Dictionary<string, object?>>()))
+        {
+            return EditResult(false, false, diagnostics: diagnostics, reason: "validation_failed");
+        }
+        if (exists && original == normalizedText)
+        {
+            return EditResult(false, false, diagnostics: diagnostics, reason: "no_change");
+        }
+        if (!apply)
+        {
+            return EditResult(
+                    true,
+                    false,
+                    changedFiles: new[] { NormalizeRelative(relative) },
+                    diagnostics: diagnostics,
+                    diffPreview: BuildDiffPreviewEntries(new[] { (relative, original, normalizedText) }),
+                    reason: "preview_only");
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+        await File.WriteAllTextAsync(full, normalizedText, Encoding.UTF8);
+        return EditResult(
+            true,
+            true,
+            changedFiles: new[] { NormalizeRelative(relative) },
+            diagnostics: diagnostics);
+    }
+
+    private async Task<object> ApplyCSharpEditsAsync(JsonElement files, bool validate, bool apply, bool format)
+    {
+        var desired = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var originals = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var diagnostics = new List<object>();
+
+        foreach (var item in files.EnumerateArray())
+        {
+            var relative = item.GetProperty("relative").GetString() ?? "";
+            var newText = item.GetProperty("newText").GetString() ?? "";
+            var full = Path.Combine(_rootDir, relative.Replace('/', Path.DirectorySeparatorChar));
+            if (!File.Exists(full))
+            {
+                return EditResult(false, false, reason: "file_not_found");
+            }
+            if (desired.ContainsKey(full))
+            {
+                return EditResult(false, false, reason: "duplicate_path");
+            }
+
+            originals[full] = await File.ReadAllTextAsync(full);
+            var formatted = MaybeFormatText(newText, format);
+            desired[full] = formatted;
+            if (validate)
+            {
+                diagnostics.AddRange(CollectSyntaxDiagnostics(formatted));
+            }
+        }
+
+        if (validate && HasErrorDiagnostics(diagnostics.Cast<Dictionary<string, object?>>()))
+        {
+            return EditResult(false, false, diagnostics: diagnostics, reason: "validation_failed");
+        }
+
+        var changed = desired
+            .Where(kv => !string.Equals(originals[kv.Key], kv.Value, StringComparison.Ordinal))
+            .Select(kv => kv.Key)
+            .ToArray();
+        if (changed.Length == 0)
+        {
+            return EditResult(false, false, diagnostics: diagnostics, reason: "no_change");
+        }
+
+        var changedFiles = changed.Select(path => NormalizeRelative(ToRel(path, _rootDir))).ToArray();
+        var diffPreview = BuildDiffPreviewEntries(changed.Select(path => (
+            ToRel(path, _rootDir),
+            originals[path],
+            desired[path]
+        )));
+
+        if (!apply)
+        {
+            return EditResult(
+                true,
+                false,
+                changedFiles: changedFiles,
+                diagnostics: diagnostics,
+                diffPreview: diffPreview,
+                reason: "preview_only");
+        }
+
+        var locks = new List<IDisposable>(changed.Length);
+        try
+        {
+            foreach (var file in changed.OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+            {
+                locks.Add(await AcquireFileLockAsync(file));
+            }
+            foreach (var file in changed)
+            {
+                await File.WriteAllTextAsync(file, desired[file], Encoding.UTF8);
+            }
+        }
+        finally
+        {
+            foreach (var entry in locks) entry.Dispose();
+        }
+
+        return EditResult(true, true, changedFiles: changedFiles, diagnostics: diagnostics);
+    }
+
     private async Task<object> ReplaceSymbolBodyAsync(string relative, string namePath, string bodyText, bool apply)
     {
         var full = Path.Combine(_rootDir, relative.Replace('/', Path.DirectorySeparatorChar));
-        if (!File.Exists(full)) return new { success = false, applied = false, error = "file_not_found" };
+        var normalizedPath = NormalizeNamePath(namePath);
+        if (!File.Exists(full)) return EditResult(false, false, reason: "file_not_found");
         var handle = await AcquireFileLockAsync(full);
         try
         {
             var text = await File.ReadAllTextAsync(full);
             var tree = CSharpSyntaxTree.ParseText(text);
             var root = await tree.GetRootAsync();
-            var (_, last) = FindNodeByNamePath(root, namePath);
-            if (last is not MethodDeclarationSyntax method) return new { success = false, applied = false, error = "method_not_found" };
+            var (_, last) = FindNodeByNamePath(root, normalizedPath);
+            if (last is not MethodDeclarationSyntax method) return EditResult(false, false, reason: "symbol_not_found");
             var block = ParseBlock(bodyText);
             // handle expression-bodied to block conversion
             var m2 = method.WithExpressionBody(null).WithSemicolonToken(default).WithBody(block);
             var newRoot = root.ReplaceNode(method, m2);
             var newText = newRoot.ToFullString();
-            if (apply) { await File.WriteAllTextAsync(full, newText, Encoding.UTF8); return new { success = true, applied = true }; }
-            return new { success = true, applied = false, preview = DiffPreview(text, newText) };
+            if (newText == text) return EditResult(false, false, reason: "no_change");
+            if (apply)
+            {
+                await File.WriteAllTextAsync(full, newText, Encoding.UTF8);
+                return EditResult(
+                    true,
+                    true,
+                    changedFiles: new[] { NormalizeRelative(relative) },
+                    changedSymbols: new[] { normalizedPath });
+            }
+            return EditResult(
+                true,
+                false,
+                changedFiles: new[] { NormalizeRelative(relative) },
+                changedSymbols: new[] { normalizedPath },
+                diffPreview: BuildDiffPreviewEntries(new[] { (relative, text, newText) }),
+                reason: "preview_only");
         }
         finally
         {
@@ -820,15 +1091,16 @@ sealed class LspServer
     private async Task<object> InsertAroundSymbolAsync(string relative, string namePath, string textToInsert, bool after, bool apply)
     {
         var full = Path.Combine(_rootDir, relative.Replace('/', Path.DirectorySeparatorChar));
-        if (!File.Exists(full)) return new { success = false, applied = false, error = "file_not_found" };
+        var normalizedPath = NormalizeNamePath(namePath);
+        if (!File.Exists(full)) return EditResult(false, false, reason: "file_not_found");
         var handle = await AcquireFileLockAsync(full);
         try
         {
             var original = await File.ReadAllTextAsync(full);
             var tree = CSharpSyntaxTree.ParseText(original);
             var root = await tree.GetRootAsync();
-            var (_, last) = FindNodeByNamePath(root, namePath);
-            if (last is null) return new { success = false, applied = false, error = "symbol_not_found" };
+            var (_, last) = FindNodeByNamePath(root, normalizedPath);
+            if (last is null) return EditResult(false, false, reason: "symbol_not_found");
             // insert members at class/namespace level using Roslyn API
             var member = SyntaxFactory.ParseMemberDeclaration(textToInsert);
             if (member is null)
@@ -836,8 +1108,23 @@ sealed class LspServer
                 // fallback to textual insertion
                 var pos = after ? last.FullSpan.End : last.FullSpan.Start;
                 var newText0 = original.Substring(0, pos) + textToInsert + original.Substring(pos);
-                if (apply) { await File.WriteAllTextAsync(full, newText0, Encoding.UTF8); return new { success = true, applied = true }; }
-                return new { success = true, applied = false, preview = DiffPreview(original, newText0) };
+                if (newText0 == original) return EditResult(false, false, reason: "no_change");
+                if (apply)
+                {
+                    await File.WriteAllTextAsync(full, newText0, Encoding.UTF8);
+                    return EditResult(
+                        true,
+                        true,
+                        changedFiles: new[] { NormalizeRelative(relative) },
+                        changedSymbols: new[] { normalizedPath });
+                }
+                return EditResult(
+                    true,
+                    false,
+                    changedFiles: new[] { NormalizeRelative(relative) },
+                    changedSymbols: new[] { normalizedPath },
+                    diffPreview: BuildDiffPreviewEntries(new[] { (relative, original, newText0) }),
+                    reason: "preview_only");
             }
             SyntaxNode newRoot;
             if (last.Parent is ClassDeclarationSyntax cls)
@@ -859,12 +1146,42 @@ sealed class LspServer
                 // fallback textual for unsupported contexts
                 var pos = after ? last.FullSpan.End : last.FullSpan.Start;
                 var newText1 = original.Substring(0, pos) + textToInsert + original.Substring(pos);
-                if (apply) { await File.WriteAllTextAsync(full, newText1, Encoding.UTF8); return new { success = true, applied = true }; }
-                return new { success = true, applied = false, preview = DiffPreview(original, newText1) };
+                if (newText1 == original) return EditResult(false, false, reason: "no_change");
+                if (apply)
+                {
+                    await File.WriteAllTextAsync(full, newText1, Encoding.UTF8);
+                    return EditResult(
+                        true,
+                        true,
+                        changedFiles: new[] { NormalizeRelative(relative) },
+                        changedSymbols: new[] { normalizedPath });
+                }
+                return EditResult(
+                    true,
+                    false,
+                    changedFiles: new[] { NormalizeRelative(relative) },
+                    changedSymbols: new[] { normalizedPath },
+                    diffPreview: BuildDiffPreviewEntries(new[] { (relative, original, newText1) }),
+                    reason: "preview_only");
             }
             var newText = newRoot.ToFullString();
-            if (apply) { await File.WriteAllTextAsync(full, newText, Encoding.UTF8); return new { success = true, applied = true }; }
-            return new { success = true, applied = false, preview = DiffPreview(original, newText) };
+            if (newText == original) return EditResult(false, false, reason: "no_change");
+            if (apply)
+            {
+                await File.WriteAllTextAsync(full, newText, Encoding.UTF8);
+                return EditResult(
+                    true,
+                    true,
+                    changedFiles: new[] { NormalizeRelative(relative) },
+                    changedSymbols: new[] { normalizedPath });
+            }
+            return EditResult(
+                true,
+                false,
+                changedFiles: new[] { NormalizeRelative(relative) },
+                changedSymbols: new[] { normalizedPath },
+                diffPreview: BuildDiffPreviewEntries(new[] { (relative, original, newText) }),
+                reason: "preview_only");
         }
         finally
         {
@@ -874,31 +1191,81 @@ sealed class LspServer
 
     private static (SyntaxNode cursor, SyntaxNode? last) FindNodeByNamePath(SyntaxNode root, string namePath)
     {
-        var segs = (namePath ?? "").Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var segs = NormalizeNamePath(namePath)
+            .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (segs.Length == 0) return (root, null);
+
         SyntaxNode cursor = root;
-        SyntaxNode? last = null;
-        int matched = 0;
         for (int i = 0; i < segs.Length; i++)
         {
             var seg = segs[i];
-            var next = cursor.DescendantNodes().FirstOrDefault(n => n is ClassDeclarationSyntax c && c.Identifier.ValueText == seg
-                                                                  || n is StructDeclarationSyntax s && s.Identifier.ValueText == seg
-                                                                  || n is InterfaceDeclarationSyntax ii && ii.Identifier.ValueText == seg
-                                                                  || n is EnumDeclarationSyntax en && en.Identifier.ValueText == seg
-                                                                  || n is MethodDeclarationSyntax m && m.Identifier.ValueText == seg
-                                                                  || n is PropertyDeclarationSyntax p && p.Identifier.ValueText == seg
-                                                                  || (n is FieldDeclarationSyntax f && f.Declaration.Variables.Any(v => v.Identifier.ValueText == seg)));
-            if (next is null)
+            var candidates = FindNamePathCandidates(cursor, seg, i == 0);
+            if (candidates.Count != 1)
             {
-                // 途中で未一致 → 完全一致ではないため last=null を返す
                 return (cursor, null);
             }
-            cursor = next;
-            matched++;
+            cursor = candidates[0];
         }
-        // 全セグメント一致した場合のみ last を返す
-        last = (matched == segs.Length && segs.Length > 0) ? cursor : null;
-        return (cursor, last);
+        return (cursor, cursor);
+    }
+
+    private static List<SyntaxNode> FindNamePathCandidates(SyntaxNode cursor, string segment, bool topLevel)
+    {
+        if (topLevel)
+        {
+            return cursor
+                .DescendantNodes()
+                .Where(node =>
+                    IsNamedTypeDeclaration(node, segment)
+                    && node.Parent is CompilationUnitSyntax or NamespaceDeclarationSyntax or FileScopedNamespaceDeclarationSyntax)
+                .Cast<SyntaxNode>()
+                .ToList();
+        }
+
+        var matches = new List<SyntaxNode>();
+        if (cursor is TypeDeclarationSyntax typeDecl)
+        {
+            foreach (var member in typeDecl.Members)
+            {
+                if (IsNamedTypeDeclaration(member, segment))
+                {
+                    matches.Add(member);
+                    continue;
+                }
+                if (member is MethodDeclarationSyntax method && method.Identifier.ValueText == segment)
+                {
+                    matches.Add(method);
+                    continue;
+                }
+                if (member is ConstructorDeclarationSyntax ctor && ctor.Identifier.ValueText == segment)
+                {
+                    matches.Add(ctor);
+                    continue;
+                }
+                if (member is PropertyDeclarationSyntax property && property.Identifier.ValueText == segment)
+                {
+                    matches.Add(property);
+                    continue;
+                }
+                if (member is FieldDeclarationSyntax field && field.Declaration.Variables.Any(variable => variable.Identifier.ValueText == segment))
+                {
+                    matches.Add(field);
+                }
+            }
+        }
+        return matches;
+    }
+
+    private static bool IsNamedTypeDeclaration(SyntaxNode node, string segment)
+    {
+        return node switch
+        {
+            ClassDeclarationSyntax cls => cls.Identifier.ValueText == segment,
+            StructDeclarationSyntax st => st.Identifier.ValueText == segment,
+            InterfaceDeclarationSyntax iface => iface.Identifier.ValueText == segment,
+            EnumDeclarationSyntax en => en.Identifier.ValueText == segment,
+            _ => false
+        };
     }
 
     private static string[] GetTypeContainerChain(SyntaxNode? node)
@@ -1004,7 +1371,8 @@ sealed class LspServer
     private async Task<object> RemoveSymbolAsync(string relative, string namePath, bool apply, bool failOnRefs, bool removeEmptyFile)
     {
         var full = Path.Combine(_rootDir, relative.Replace('/', Path.DirectorySeparatorChar));
-        if (!File.Exists(full)) return new { success = false, applied = false, error = "file_not_found" };
+        var normalizedPath = NormalizeNamePath(namePath);
+        if (!File.Exists(full)) return EditResult(false, false, reason: "file_not_found");
         try
         {
             var handle = await AcquireFileLockAsync(full);
@@ -1014,13 +1382,13 @@ sealed class LspServer
             var original = await File.ReadAllTextAsync(full);
             var tree0 = CSharpSyntaxTree.ParseText(original);
             var root0 = await tree0.GetRootAsync();
-            var (_, targetNode) = FindNodeByNamePath(root0, namePath);
-            if (targetNode is null) return new { success = false, applied = false, error = "symbol_not_found" };
+            var (_, targetNode) = FindNodeByNamePath(root0, normalizedPath);
+            if (targetNode is null) return EditResult(false, false, reason: "symbol_not_found");
 
             // Optional preflight: detect references across workspace (naive but syntax-aware)
             if (failOnRefs)
             {
-                var lastSeg = (namePath ?? "").Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).LastOrDefault() ?? "";
+                var lastSeg = NormalizeNamePath(normalizedPath).Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).LastOrDefault() ?? "";
                 if (!string.IsNullOrEmpty(lastSeg))
                 {
                     var declContainers = GetTypeContainerChain(targetNode);
@@ -1060,7 +1428,7 @@ sealed class LspServer
                     }
                     if (refs.Count > 0)
                     {
-                        return new { success = false, applied = false, references = refs };
+                        return EditResult(false, false, diagnostics: refs, reason: "references_found");
                     }
                 }
             }
@@ -1068,25 +1436,39 @@ sealed class LspServer
             // Apply removal
             var tree = CSharpSyntaxTree.ParseText(original);
             var root = await tree.GetRootAsync();
-            var (_, last) = FindNodeByNamePath(root, namePath);
-            if (last is null) return new { success = false, applied = false, error = "symbol_not_found" };
+            var (_, last) = FindNodeByNamePath(root, normalizedPath);
+            if (last is null) return EditResult(false, false, reason: "symbol_not_found");
             var newRoot = root.RemoveNode(last, SyntaxRemoveOptions.KeepExteriorTrivia);
             var newText = newRoot?.ToFullString() ?? original;
             if (newText == original)
             {
-                return new { success = false, applied = false, error = "no_change" };
+                return EditResult(false, false, reason: "no_change");
             }
             if (apply)
             {
                 if (removeEmptyFile && string.IsNullOrWhiteSpace(newText))
                 {
                     File.Delete(full);
-                    return new { success = true, applied = true, removedFile = true };
+                    return EditResult(
+                        true,
+                        true,
+                        changedFiles: new[] { NormalizeRelative(relative) },
+                        changedSymbols: new[] { normalizedPath });
                 }
                 await File.WriteAllTextAsync(full, newText, Encoding.UTF8);
-                return new { success = true, applied = true };
+                return EditResult(
+                    true,
+                    true,
+                    changedFiles: new[] { NormalizeRelative(relative) },
+                    changedSymbols: new[] { normalizedPath });
             }
-            return new { success = true, applied = false, preview = DiffPreview(original, newText) };
+            return EditResult(
+                true,
+                false,
+                changedFiles: new[] { NormalizeRelative(relative) },
+                changedSymbols: new[] { normalizedPath },
+                diffPreview: BuildDiffPreviewEntries(new[] { (relative, original, newText) }),
+                reason: "preview_only");
             }
             finally
             {
@@ -1095,7 +1477,7 @@ sealed class LspServer
         }
         catch (Exception ex)
         {
-            return new { success = false, applied = false, error = ex.Message };
+            return EditResult(false, false, reason: ex.Message);
         }
     }
 
@@ -1130,15 +1512,64 @@ sealed class LspServer
         return normFull;
     }
 
-    private static object MakeSym(string name, int kind, SyntaxNode node)
+    private static string NormalizeNamePath(string raw)
     {
-        var span = node.GetLocation().GetLineSpan();
-        var start = new { line = span.StartLinePosition.Line, character = span.StartLinePosition.Character };
-        var end = new { line = span.EndLinePosition.Line, character = span.EndLinePosition.Character };
+        return string.Join(
+            '/',
+            (raw ?? string.Empty)
+                .Replace('.', '/')
+                .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        );
+    }
+
+    private static string? ContainerPath(string namePath)
+    {
+        var segments = NormalizeNamePath(namePath)
+            .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (segments.Length <= 1) return null;
+        return string.Join('/', segments.Take(segments.Length - 1));
+    }
+
+    private static string? ContainerName(string namePath)
+    {
+        var containerPath = ContainerPath(namePath);
+        if (string.IsNullOrEmpty(containerPath)) return null;
+        return containerPath.Split('/').LastOrDefault();
+    }
+
+    private static int SymbolKindCode(string kind) => kind switch
+    {
+        "namespace" => 3,
+        "class" => 5,
+        "method" => 6,
+        "constructor" => 9,
+        "property" => 7,
+        "field" => 8,
+        "enum" => 10,
+        "interface" => 11,
+        "struct" => 23,
+        _ => 0
+    };
+
+    private List<CodeIndexEntry> CollectEntries(SyntaxNode root, string relativePath)
+    {
+        var entries = new List<CodeIndexEntry>();
+        CollectSymbols(root, new Stack<string>(), entries, relativePath);
+        return entries;
+    }
+
+    private static object MakeSym(CodeIndexEntry entry)
+    {
+        var start = new { line = Math.Max(entry.Line - 1, 0), character = Math.Max(entry.Column - 1, 0) };
+        var end = start;
         return new
         {
-            name,
-            kind,
+            name = entry.Name,
+            kind = SymbolKindCode(entry.Kind),
+            kindName = entry.Kind,
+            namePath = NormalizeNamePath(entry.NamePath),
+            container = ContainerName(entry.NamePath),
+            containerPath = ContainerPath(entry.NamePath),
             range = new { start, end },
             selectionRange = new { start, end }
         };
@@ -1216,20 +1647,16 @@ sealed class LspServer
         switch (node)
         {
             case FileScopedNamespaceDeclarationSyntax fileNs:
-                scope.Push(fileNs.Name.ToString());
                 foreach (var member in fileNs.Members)
                 {
                     CollectSymbols(member, scope, output, relativePath);
                 }
-                scope.Pop();
                 break;
             case NamespaceDeclarationSyntax ns:
-                scope.Push(ns.Name.ToString());
                 foreach (var member in ns.Members)
                 {
                     CollectSymbols(member, scope, output, relativePath);
                 }
-                scope.Pop();
                 break;
             case ClassDeclarationSyntax cls:
                 AddEntry(cls.Identifier.ValueText, "class", cls, scope, output, relativePath);
@@ -1303,7 +1730,7 @@ sealed class LspServer
         var span = node.GetLocation().GetLineSpan();
         var line = span.StartLinePosition.Line + 1;
         var column = span.StartLinePosition.Character + 1;
-        var namePath = string.Join('.', scope.Reverse().Append(name));
+        var namePath = NormalizeNamePath(string.Join('/', scope.Reverse().Append(name)));
 
         output.Add(new CodeIndexEntry
         {

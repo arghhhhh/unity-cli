@@ -21,6 +21,10 @@ namespace UnityCliBridge.Tests.Integration
         [SetUp]
         public void Setup()
         {
+            if (!Application.isBatchMode)
+            {
+                Core.UnityCliBridge.ChangePort(TEST_PORT);
+            }
             EnsureServerRunning();
         }
 
@@ -34,7 +38,7 @@ namespace UnityCliBridge.Tests.Integration
             {
                 // Act - Try to connect to the Unity TCP server
                 client = new TcpClient();
-                var connectTask = client.ConnectAsync("127.0.0.1", Core.UnityCliBridge.DEFAULT_PORT);
+                var connectTask = client.ConnectAsync("127.0.0.1", TEST_PORT);
                 
                 // Wait for connection with timeout
                 var completed = await Task.WhenAny(connectTask, Task.Delay(CONNECTION_TIMEOUT_MS));
@@ -60,7 +64,7 @@ namespace UnityCliBridge.Tests.Integration
             try
             {
                 client = new TcpClient();
-                await client.ConnectAsync("127.0.0.1", Core.UnityCliBridge.DEFAULT_PORT);
+                await client.ConnectAsync("127.0.0.1", TEST_PORT);
                 
                 var stream = client.GetStream();
                 
@@ -117,7 +121,7 @@ namespace UnityCliBridge.Tests.Integration
             try
             {
                 client = new TcpClient();
-                await client.ConnectAsync("127.0.0.1", Core.UnityCliBridge.DEFAULT_PORT);
+                await client.ConnectAsync("127.0.0.1", TEST_PORT);
                 
                 var stream = client.GetStream();
                 
@@ -199,8 +203,9 @@ namespace UnityCliBridge.Tests.Integration
             // This test verifies that the status enum is working correctly
             Assert.IsTrue(
                 Core.UnityCliBridge.Status == BridgeStatus.Disconnected ||
-                Core.UnityCliBridge.Status == BridgeStatus.Connected,
-                "Status should be either Disconnected or Connected"
+                Core.UnityCliBridge.Status == BridgeStatus.Connected ||
+                Core.UnityCliBridge.Status == BridgeStatus.NotConfigured,
+                "Status should be Disconnected, Connected, or NotConfigured in batch/test mode"
             );
         }
         
@@ -214,7 +219,7 @@ namespace UnityCliBridge.Tests.Integration
             {
                 // First connection
                 client = new TcpClient();
-                await client.ConnectAsync("127.0.0.1", Core.UnityCliBridge.DEFAULT_PORT);
+                await client.ConnectAsync("127.0.0.1", TEST_PORT);
                 Assert.IsTrue(client.Connected, "Should connect initially");
                 
                 // Disconnect
@@ -226,7 +231,7 @@ namespace UnityCliBridge.Tests.Integration
                 
                 // Act - Reconnect
                 client = new TcpClient();
-                var reconnectTask = client.ConnectAsync("127.0.0.1", Core.UnityCliBridge.DEFAULT_PORT);
+                var reconnectTask = client.ConnectAsync("127.0.0.1", TEST_PORT);
                 var completed = await Task.WhenAny(reconnectTask, Task.Delay(CONNECTION_TIMEOUT_MS));
                 
                 // Assert
@@ -242,24 +247,28 @@ namespace UnityCliBridge.Tests.Integration
 
         private static void EnsureServerRunning()
         {
-            if (IsServerReachable(Core.UnityCliBridge.DEFAULT_PORT))
+            if (IsServerReachable(TEST_PORT))
             {
                 return;
             }
 
-            Core.UnityCliBridge.Restart();
+            if (!Application.isBatchMode)
+            {
+                Core.UnityCliBridge.ChangePort(TEST_PORT);
+                Core.UnityCliBridge.Restart();
+            }
 
             var sw = Stopwatch.StartNew();
             while (sw.ElapsedMilliseconds < CONNECTION_TIMEOUT_MS)
             {
-                if (IsServerReachable(Core.UnityCliBridge.DEFAULT_PORT))
+                if (IsServerReachable(TEST_PORT))
                 {
                     return;
                 }
                 Thread.Sleep(200);
             }
 
-            Assert.Ignore("Unity CLI Bridge TCP listener is not reachable on the default port. Integration tests skipped.");
+            Assert.Ignore($"Unity CLI Bridge TCP listener is not reachable on port {TEST_PORT}. Integration tests skipped.");
         }
 
         private static bool IsServerReachable(int port)

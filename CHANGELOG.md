@@ -1,3 +1,28 @@
+## [0.3.0] - 2026-03-10
+
+### 🚀 Features
+
+- Strengthen C# edit workflow
+- *(ci)* Add cargo publish step to release workflow
+
+### 🐛 Bug Fixes
+
+- Retry transient lsp manifest fetches
+- *(publish)* Restrict crate package to src and root files only
+
+### 📚 Documentation
+
+- Codify issue completion criteria
+- Add OpenUPM install instructions to all READMEs
+
+### 🧪 Testing
+
+- Tighten E2E coverage
+
+### ⚙️ Miscellaneous Tasks
+
+- Ignore local cache directory
+
 ## [0.2.4] - 2026-03-06
 
 ### 🐛 Bug Fixes

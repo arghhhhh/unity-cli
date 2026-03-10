@@ -90,6 +90,7 @@ tests/.todo/
 dist/
 build/
 target/
+.cache/
 CLAUDE.local.md
 
 .unity/

@@ -3,9 +3,7 @@
     "rootNamespace": "UnityCliBridge.Tests",
     "references": [
         "UnityCliBridge.Editor",
-        "UnityCliBridge.Runtime",
-        "UnityEngine.TestRunner",
-        "UnityEditor.TestRunner"
+        "UnityCliBridge.Runtime"
     ],
     "includePlatforms": [
         "Editor"
@@ -18,6 +16,9 @@
         "Newtonsoft.Json.dll"
     ],
     "autoReferenced": false,
+    "optionalUnityReferences": [
+        "TestAssemblies"
+    ],
     "defineConstraints": [
         "UNITY_INCLUDE_TESTS"
     ],

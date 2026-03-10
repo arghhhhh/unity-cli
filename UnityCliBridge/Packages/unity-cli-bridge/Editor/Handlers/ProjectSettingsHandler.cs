@@ -95,6 +95,109 @@ namespace UnityCliBridge.Handlers
             }
         }
 
+        public static object GetProjectSetting(JObject parameters)
+        {
+            try
+            {
+                var path = parameters["path"]?.ToString();
+                if (string.IsNullOrWhiteSpace(path))
+                {
+                    return new { error = "path is required", code = "INVALID_ARGUMENT" };
+                }
+
+                var settings = GetSettingsSnapshotForPath(path);
+                var token = SelectPathToken(settings, path);
+                if (token == null)
+                {
+                    return new
+                    {
+                        success = false,
+                        path = path,
+                        error = "setting_not_found"
+                    };
+                }
+
+                return new
+                {
+                    success = true,
+                    path = NormalizePath(path),
+                    value = token.DeepClone()
+                };
+            }
+            catch (Exception ex)
+            {
+                BridgeLogger.LogError("ProjectSettingsHandler", $"Error getting project setting: {ex.Message}");
+                return new { error = $"Failed to get project setting: {ex.Message}" };
+            }
+        }
+
+        public static object SetProjectSetting(JObject parameters)
+        {
+            try
+            {
+                var path = parameters["path"]?.ToString();
+                if (string.IsNullOrWhiteSpace(path))
+                {
+                    return new { error = "path is required", code = "INVALID_ARGUMENT" };
+                }
+                if (parameters["value"] == null)
+                {
+                    return new { error = "value is required", code = "INVALID_ARGUMENT" };
+                }
+                if (!parameters["confirmChanges"]?.ToObject<bool>() ?? false)
+                {
+                    return new
+                    {
+                        error = "confirmChanges must be true to update settings",
+                        code = "CONFIRMATION_REQUIRED"
+                    };
+                }
+
+                var normalizedPath = NormalizePath(path);
+                var segments = normalizedPath.Split('/');
+                if (segments.Length < 2)
+                {
+                    return new { error = "path must include section/key", code = "INVALID_PATH" };
+                }
+
+                var section = segments[0];
+                if (!IsSupportedWritableSection(section))
+                {
+                    return new
+                    {
+                        error = $"unsupported project setting section: {section}",
+                        code = "UNSUPPORTED_PATH"
+                    };
+                }
+
+                var updateParameters = new JObject
+                {
+                    ["confirmChanges"] = true,
+                    [section] = BuildNestedObject(segments, 1, parameters["value"])
+                };
+
+                var previousValue = SelectPathToken(GetSettingsSnapshotForPath(normalizedPath), normalizedPath)?.DeepClone();
+                var result = JObject.FromObject(UpdateProjectSettings(updateParameters));
+                if (result["error"] != null)
+                {
+                    return result;
+                }
+
+                return new
+                {
+                    success = true,
+                    path = normalizedPath,
+                    value = parameters["value"].DeepClone(),
+                    previousValue = previousValue
+                };
+            }
+            catch (Exception ex)
+            {
+                BridgeLogger.LogError("ProjectSettingsHandler", $"Error setting project setting: {ex.Message}");
+                return new { error = $"Failed to set project setting: {ex.Message}" };
+            }
+        }
+
         /// <summary>
         /// Updates project settings with confirmation
         /// </summary>
@@ -579,6 +682,108 @@ namespace UnityCliBridge.Handlers
             }
 
             return Tuple.Create(result, previous, false);
+        }
+
+        private static JObject GetSettingsSnapshotForPath(string path)
+        {
+            var section = NormalizePath(path).Split('/')[0];
+            var parameters = new JObject();
+
+            switch (section)
+            {
+                case "player":
+                    parameters["includePlayer"] = true;
+                    break;
+                case "graphics":
+                    parameters["includeGraphics"] = true;
+                    break;
+                case "quality":
+                    parameters["includeQuality"] = true;
+                    break;
+                case "physics":
+                    parameters["includePhysics"] = true;
+                    break;
+                case "physics2D":
+                    parameters["includePhysics2D"] = true;
+                    break;
+                case "audio":
+                    parameters["includeAudio"] = true;
+                    break;
+                case "time":
+                    parameters["includeTime"] = true;
+                    break;
+                case "inputManager":
+                    parameters["includeInputManager"] = true;
+                    break;
+                case "editor":
+                    parameters["includeEditor"] = true;
+                    break;
+                case "build":
+                    parameters["includeBuild"] = true;
+                    break;
+                case "tags":
+                    parameters["includeTags"] = true;
+                    break;
+                default:
+                    throw new InvalidOperationException($"Unsupported project setting path: {path}");
+            }
+
+            return JObject.FromObject(GetProjectSettings(parameters));
+        }
+
+        private static string NormalizePath(string raw)
+        {
+            return string.Join(
+                "/",
+                (raw ?? string.Empty)
+                    .Replace('.', '/')
+                    .Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries)
+            );
+        }
+
+        private static JToken SelectPathToken(JToken root, string path)
+        {
+            var current = root;
+            foreach (var segment in NormalizePath(path).Split('/'))
+            {
+                current = current?[segment];
+                if (current == null)
+                {
+                    return null;
+                }
+            }
+            return current;
+        }
+
+        private static JObject BuildNestedObject(string[] segments, int index, JToken value)
+        {
+            if (index == segments.Length - 1)
+            {
+                return new JObject
+                {
+                    [segments[index]] = value.DeepClone()
+                };
+            }
+
+            return new JObject
+            {
+                [segments[index]] = BuildNestedObject(segments, index + 1, value)
+            };
+        }
+
+        private static bool IsSupportedWritableSection(string section)
+        {
+            switch (section)
+            {
+                case "player":
+                case "graphics":
+                case "physics":
+                case "audio":
+                case "time":
+                    return true;
+                default:
+                    return false;
+            }
         }
 
         #endregion
