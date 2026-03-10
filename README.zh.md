@@ -50,7 +50,15 @@ cd unity-cli
 cargo install --path .
 ```
 
-Unity 侧 UPM 包 URL:
+Unity 侧桥接包（选择其一）:
+
+**OpenUPM**（推荐）:
+
+```bash
+openupm add com.akiojin.unity-cli-bridge
+```
+
+**Git URL**（Unity Package Manager）:
 
 ```text
 https://github.com/akiojin/unity-cli.git?path=UnityCliBridge/Packages/unity-cli-bridge
