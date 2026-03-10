@@ -138,7 +138,15 @@ pub fn call_tool(tool_name: &str, params: &Value, project_root: &Path) -> Result
     })?;
 
     if response.ok {
-        return Ok(response.result.unwrap_or(Value::Null));
+        let result = response
+            .result
+            .ok_or_else(|| anyhow!("lspd response missing `result` for tool `{tool_name}`"))?;
+        if result.is_null() {
+            return Err(anyhow!(
+                "lspd response contained null `result` for tool `{tool_name}`"
+            ));
+        }
+        return Ok(result);
     }
 
     Err(anyhow!(

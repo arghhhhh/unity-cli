@@ -10,6 +10,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PROJECT_ROOT="${REPO_ROOT}/UnityCliBridge"
 
 UNITY_CLI=""
+UNITY_CLI_TOOLS_ROOT_OVERRIDE=""
 RUNS=5
 WARMUP=1
 JSON_OUTPUT=0
@@ -92,6 +93,10 @@ if [[ ! -d "${PROJECT_ROOT}/Assets" || ! -d "${PROJECT_ROOT}/Packages" ]]; then
   exit 1
 fi
 
+if [[ -x "${REPO_ROOT}/.cache/csharp-lsp/csharp-lsp/osx-arm64/server" || -x "${REPO_ROOT}/.cache/csharp-lsp/csharp-lsp/osx-arm64/Server" ]]; then
+  UNITY_CLI_TOOLS_ROOT_OVERRIDE="${REPO_ROOT}/.cache/csharp-lsp"
+fi
+
 if ! command -v jq >/dev/null 2>&1; then
   echo "ERROR: jq is required." >&2
   exit 1
@@ -122,6 +127,9 @@ then
 fi
 
 export UNITY_PROJECT_ROOT="${PROJECT_ROOT}"
+if [[ -n "${UNITY_CLI_TOOLS_ROOT_OVERRIDE}" ]]; then
+  export UNITY_CLI_TOOLS_ROOT="${UNITY_CLI_TOOLS_ROOT_OVERRIDE}"
+fi
 
 now_ms() {
   python3 - <<'PY'
@@ -340,7 +348,7 @@ run_and_record() {
 
 run_and_record "get_symbols" "get_symbols" '{"path":"Assets/Scripts/ButtonHandler.cs"}' "${THRESHOLD_GET_SYMBOLS_MS}"
 run_and_record "find_symbol" "find_symbol" '{"name":"ButtonHandler","kind":"class","exact":true,"scope":"assets"}' "${THRESHOLD_FIND_SYMBOL_MS}"
-run_and_record "find_refs" "find_refs" '{"name":"ButtonHandler","scope":"assets","pageSize":20}' "${THRESHOLD_FIND_REFS_MS}"
+run_and_record "find_refs" "find_refs" '{"name":"DiceController","scope":"assets","pageSize":20}' "${THRESHOLD_FIND_REFS_MS}"
 run_and_record "get_symbols_giga" "get_symbols" '{"path":"Assets/Scripts/GigaTestFile.cs"}' "${THRESHOLD_GET_SYMBOLS_GIGA_MS}"
 run_and_record "find_symbol_giga" "find_symbol" '{"name":"GigaGameManager","kind":"class","exact":true,"scope":"assets"}' "${THRESHOLD_FIND_SYMBOL_GIGA_MS}"
 run_and_record "find_refs_giga" "find_refs" '{"name":"InventoryItem","scope":"assets","pageSize":100}' "${THRESHOLD_FIND_REFS_GIGA_MS}"

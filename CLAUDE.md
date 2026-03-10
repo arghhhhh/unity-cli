@@ -49,6 +49,10 @@ Node.js + MCP プロトコルベースの旧実装を Rust + TCP 直接通信に
 - 動作証明なしで「完了」としない
 - テスト実行、ログ確認、必要時の `main` 比較を行う
 - 「スタッフエンジニアがレビューで承認できるか」を自己チェックする
+- `gwt-spec` ラベル付き Issue を進めている間は、完了判定の一次情報を Issue 本文の `Tasks` / 受け入れ基準に置く
+- 実装やローカルメモだけが進んでいても、Issue 本文の `Tasks` が未更新なら「完了」と言わない
+- 完了報告前に、Issue 本文・PR本文・ローカル差分・作業ツリー状態が一致していることを確認する
+- ローカル検証用の一時生成物（例: `.cache/` や generated asset）が残る場合は、ignore または cleanup のどちらかを先に行う
 
 ### 4. エレガントさを追求する（過剰設計しない）
 
@@ -100,6 +104,7 @@ dotnet test lsp/Server.Tests.csproj
 - `gwt-spec` ラベル付き Issue の本文（`Spec` / `Plan` / `Tasks` / `TDD`）
 - SPEC ID は `SPEC-xxxxxxxx` ではなく Issue 番号を使う
 - 新規の `specs/SPEC-*` ディレクトリは作成しない
+- 実装完了の宣言は、Issue 本文の `Tasks` が実態どおりに更新され、受け入れ基準が満たされてから行う
 
 ## リリース
 
