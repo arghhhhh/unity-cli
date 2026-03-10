@@ -1,7 +1,7 @@
 {
   "name": "unity-cli",
   "version": "0.1.0",
-  "description": "Claude Code plugin providing skills for Rust-based unity-cli workflows.",
+  "description": "Claude Code plugin providing workflow-oriented skills for Rust-based unity-cli automation.",
   "author": {
     "name": "akiojin",
     "url": "https://github.com/akiojin"
