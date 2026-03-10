@@ -1274,7 +1274,7 @@ fn tool_params_schema(name: &str) -> Value {
                 ("gameObjectPath", string_schema()),
                 ("includeChildren", boolean_schema()),
             ],
-            &["gameObjectPath"],
+            &[],
             false,
         ),
         "analyze_asset_dependencies" => with_one_of(

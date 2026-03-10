@@ -1,8 +1,10 @@
 using System;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using Newtonsoft.Json.Linq;
 using UnityCliBridge.Logging;
+using UnityEngine;
 
 namespace UnityCliBridge.Handlers
 {
@@ -24,15 +26,40 @@ namespace UnityCliBridge.Handlers
                     return new { error = "package and key are required", code = "INVALID_ARGUMENT" };
                 }
 
-                var context = ResolveContext(package, scopeName);
-                if (!TryGetValue(context.SettingsInstance, key, context.ScopeValue, out var value))
+                if (TryResolveContext(package, scopeName, out var context))
+                {
+                    if (!TryGetValue(context.SettingsInstance, key, context.ScopeValue, out var value))
+                    {
+                        return new
+                        {
+                            success = false,
+                            package = package,
+                            key = key,
+                            scope = context.ScopeName,
+                            error = "setting_not_found"
+                        };
+                    }
+
+                    return new
+                    {
+                        success = true,
+                        package = package,
+                        key = key,
+                        scope = context.ScopeName,
+                        value = ConvertToToken(value)
+                    };
+                }
+
+                var store = LoadStore(GetStorePath(package, scopeName));
+                var token = SelectPathToken(store, key);
+                if (token == null)
                 {
                     return new
                     {
                         success = false,
                         package = package,
-                        key = key,
-                        scope = context.ScopeName,
+                        key = NormalizePath(key),
+                        scope = NormalizeScopeName(scopeName),
                         error = "setting_not_found"
                     };
                 }
@@ -41,9 +68,9 @@ namespace UnityCliBridge.Handlers
                 {
                     success = true,
                     package = package,
-                    key = key,
-                    scope = context.ScopeName,
-                    value = ConvertToToken(value)
+                    key = NormalizePath(key),
+                    scope = NormalizeScopeName(scopeName),
+                    value = token.DeepClone()
                 };
             }
             catch (Exception ex)
@@ -73,20 +100,38 @@ namespace UnityCliBridge.Handlers
                     };
                 }
 
-                var context = ResolveContext(package, scopeName);
-                TryGetValue(context.SettingsInstance, key, context.ScopeValue, out var previousValue);
+                if (TryResolveContext(package, scopeName, out var context))
+                {
+                    TryGetValue(context.SettingsInstance, key, context.ScopeValue, out var previousValue);
 
-                var clrValue = ConvertToClr(parameters["value"]);
-                InvokeSet(context.SettingsInstance, key, clrValue, context.ScopeValue);
-                InvokeSave(context.SettingsInstance);
+                    var clrValue = ConvertToClr(parameters["value"]);
+                    InvokeSet(context.SettingsInstance, key, clrValue, context.ScopeValue);
+                    InvokeSave(context.SettingsInstance);
+
+                    return new
+                    {
+                        success = true,
+                        package = package,
+                        key = key,
+                        scope = context.ScopeName,
+                        previousValue = previousValue != null ? ConvertToToken(previousValue) : null,
+                        value = parameters["value"].DeepClone()
+                    };
+                }
+
+                var storePath = GetStorePath(package, scopeName);
+                var store = LoadStore(storePath);
+                var previousToken = SelectPathToken(store, key)?.DeepClone();
+                SetPathToken(store, key, parameters["value"]?.DeepClone() ?? JValue.CreateNull());
+                SaveStore(storePath, store);
 
                 return new
                 {
                     success = true,
                     package = package,
-                    key = key,
-                    scope = context.ScopeName,
-                    previousValue = previousValue != null ? ConvertToToken(previousValue) : null,
+                    key = NormalizePath(key),
+                    scope = NormalizeScopeName(scopeName),
+                    previousValue = previousToken,
                     value = parameters["value"].DeepClone()
                 };
             }
@@ -104,8 +149,9 @@ namespace UnityCliBridge.Handlers
             public string ScopeName { get; set; }
         }
 
-        private static SettingsContext ResolveContext(string package, string scopeName)
+        private static bool TryResolveContext(string package, string scopeName, out SettingsContext context)
         {
+            context = null;
             var settingsType = FindType(
                 "UnityEditor.SettingsManagement.Settings, Unity.SettingsManager.Editor",
                 "UnityEditor.SettingsManagement.Settings, Unity.SettingsManager");
@@ -114,21 +160,23 @@ namespace UnityCliBridge.Handlers
                 "UnityEditor.SettingsManagement.SettingsScope, Unity.SettingsManager");
             if (settingsType == null || scopeType == null)
             {
-                throw new InvalidOperationException("Unity Settings Manager package is not available");
+                return false;
             }
 
-            var normalizedScope = string.Equals(scopeName, "user", StringComparison.OrdinalIgnoreCase)
-                ? "User"
-                : "Project";
-            var scopeValue = Enum.Parse(scopeType, normalizedScope, true);
+            var normalizedScope = NormalizeScopeName(scopeName);
+            var scopeValue = Enum.Parse(
+                scopeType,
+                normalizedScope == "user" ? "User" : "Project",
+                true);
             var settingsInstance = CreateSettingsInstance(settingsType, package);
 
-            return new SettingsContext
+            context = new SettingsContext
             {
                 SettingsInstance = settingsInstance,
                 ScopeValue = scopeValue,
-                ScopeName = normalizedScope.ToLowerInvariant()
+                ScopeName = normalizedScope
             };
+            return true;
         }
 
         private static Type FindType(params string[] candidates)
@@ -286,6 +334,89 @@ namespace UnityCliBridge.Handlers
             }
 
             return JToken.FromObject(value);
+        }
+
+        private static string NormalizeScopeName(string scopeName)
+        {
+            return string.Equals(scopeName, "user", StringComparison.OrdinalIgnoreCase)
+                ? "user"
+                : "project";
+        }
+
+        private static string NormalizePath(string raw)
+        {
+            return string.Join(
+                "/",
+                (raw ?? string.Empty)
+                    .Replace('.', '/')
+                    .Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries)
+            );
+        }
+
+        private static string GetStorePath(string package, string scopeName)
+        {
+            var projectRoot = Application.dataPath.Substring(0, Application.dataPath.Length - "/Assets".Length);
+            var rootFolder = NormalizeScopeName(scopeName) == "user" ? "UserSettings" : "ProjectSettings";
+            var dir = Path.Combine(projectRoot, rootFolder, "UnityCliPackageSettings");
+            var fileName = SanitizeFileName(package) + ".json";
+            return Path.Combine(dir, fileName);
+        }
+
+        private static JObject LoadStore(string path)
+        {
+            if (!File.Exists(path))
+            {
+                return new JObject();
+            }
+
+            var text = File.ReadAllText(path);
+            return string.IsNullOrWhiteSpace(text) ? new JObject() : JObject.Parse(text);
+        }
+
+        private static void SaveStore(string path, JObject store)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+            File.WriteAllText(path, store.ToString());
+        }
+
+        private static JToken SelectPathToken(JToken root, string key)
+        {
+            var current = root;
+            foreach (var segment in NormalizePath(key).Split('/'))
+            {
+                current = current?[segment];
+                if (current == null)
+                {
+                    return null;
+                }
+            }
+            return current;
+        }
+
+        private static void SetPathToken(JObject root, string key, JToken value)
+        {
+            var segments = NormalizePath(key).Split('/');
+            JObject current = root;
+            for (int i = 0; i < segments.Length - 1; i++)
+            {
+                if (current[segments[i]] is not JObject next)
+                {
+                    next = new JObject();
+                    current[segments[i]] = next;
+                }
+                current = next;
+            }
+            current[segments[^1]] = value;
+        }
+
+        private static string SanitizeFileName(string raw)
+        {
+            var fileName = raw ?? "package";
+            foreach (var invalid in Path.GetInvalidFileNameChars())
+            {
+                fileName = fileName.Replace(invalid, '_');
+            }
+            return fileName.Replace('/', '_').Replace('\\', '_');
         }
     }
 }

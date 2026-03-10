@@ -665,7 +665,7 @@ sealed class LspServer
                         var r = await t.GetRootAsync();
                         var tokens = r.DescendantTokens().Where(tk => tk.IsKind(SyntaxKind.IdentifierToken) && tk.ValueText == oldName).ToArray();
                         if (tokens.Length == 0) continue;
-                        bool changed = false;
+                        bool fileChanged = false;
                         SyntaxNode rr = r;
                         foreach (var tk in tokens)
                         {
@@ -684,18 +684,18 @@ sealed class LspServer
                             if (isTypeDecl)
                             {
                                 rr = rr.ReplaceToken(tk, SyntaxFactory.Identifier(newName).WithTriviaFrom(tk));
-                                changed = true;
+                                fileChanged = true;
                             }
                             else if (isMemberDecl)
                             {
                                 if (tk.Parent is IdentifierNameSyntax)
                                 {
                                     rr = rr.ReplaceToken(tk, SyntaxFactory.Identifier(newName).WithTriviaFrom(tk));
-                                    changed = true;
+                                    fileChanged = true;
                                 }
                             }
                         }
-                        if (changed)
+                        if (fileChanged)
                         {
                             updatedFiles[file] = rr.ToFullString();
                             originalByFile[file] = src;

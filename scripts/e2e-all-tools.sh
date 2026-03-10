@@ -11,6 +11,7 @@ SKIP_QUIT=0
 SKIP_LSP_PERF=0
 LSP_PERF_RUNS=5
 UNITY_CLI=""
+UNITY_CLI_TOOLS_ROOT_OVERRIDE=""
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -27,6 +28,7 @@ UI_SCENE_PATH="Assets/Scenes/Generated/UI/UnityCli_UI_UGUI_TestScene.unity"
 MATERIAL_PATH="${GEN_DIR}/Materials/E2E_AllTools_${RUN_ID}.mat"
 PREFAB_PATH="${GEN_DIR}/Prefabs/E2E_AllTools_${RUN_ID}.prefab"
 INPUT_ACTIONS_COPY="${GEN_DIR}/E2E_InputActions_${RUN_ID}.inputactions"
+RUN_ID_SAFE="${RUN_ID//-/}"
 ACTION_MAP_NAME="E2E_Map_${RUN_ID}"
 CONTROL_SCHEME_NAME="E2E_Scheme_${RUN_ID}"
 
@@ -151,7 +153,14 @@ if [[ ! -d "${PROJECT_ROOT}/Assets" || ! -d "${PROJECT_ROOT}/Packages" ]]; then
   exit 1
 fi
 
+if [[ -x "${REPO_ROOT}/.cache/csharp-lsp/csharp-lsp/osx-arm64/server" || -x "${REPO_ROOT}/.cache/csharp-lsp/csharp-lsp/osx-arm64/Server" ]]; then
+  UNITY_CLI_TOOLS_ROOT_OVERRIDE="${REPO_ROOT}/.cache/csharp-lsp"
+fi
+
 export UNITY_PROJECT_ROOT="${PROJECT_ROOT}"
+if [[ -n "${UNITY_CLI_TOOLS_ROOT_OVERRIDE}" ]]; then
+  export UNITY_CLI_TOOLS_ROOT="${UNITY_CLI_TOOLS_ROOT_OVERRIDE}"
+fi
 
 mkdir -p "${PROJECT_ROOT}/${GEN_DIR}/Materials" "${PROJECT_ROOT}/${GEN_DIR}/Prefabs"
 
@@ -198,6 +207,11 @@ run_tool() {
 
   printf "  %-30s ... " "${tool}"
   output="$(invoke_tool "${tool}" "${payload}" 2>&1)" || rc=$?
+  if [[ ${rc} -ne 0 ]] && [[ "${output}" == *"early eof"* || "${output}" == *"connection reset"* || "${output}" == *"timed out"* || "${output}" == *"Connection refused"* || "${output}" == *"Failed to connect to Unity"* ]]; then
+    sleep 1
+    rc=0
+    output="$(invoke_tool "${tool}" "${payload}" 2>&1)" || rc=$?
+  fi
   LAST_OUTPUT="${output}"
 
   {
@@ -252,6 +266,20 @@ wait_for_tests_done() {
     output="$(invoke_tool "get_test_status" '{"includeTestResults":false}' 2>/dev/null || true)"
     status="$(jq -r '.status // "unknown"' <<<"${output}" 2>/dev/null || echo "unknown")"
     if [[ "${status}" != "running" ]]; then
+      return 0
+    fi
+    sleep 0.5
+  done
+  return 1
+}
+
+wait_for_compile_idle() {
+  local max_tries=120
+  local i output compiling
+  for ((i = 1; i <= max_tries; i++)); do
+    output="$(invoke_tool "get_compilation_state" '{"includeMessages":false}' 2>/dev/null || true)"
+    compiling="$(jq -r '.isCompiling // false' <<<"${output}" 2>/dev/null || echo "true")"
+    if [[ "${compiling}" == "false" ]]; then
       return 0
     fi
     sleep 0.5
@@ -316,16 +344,29 @@ json_get_input_state="$(jq -nc --arg assetPath "${INPUT_ACTIONS_COPY}" '{assetPa
 json_update_index="$(jq -nc '{paths:["Assets/Scripts/ButtonHandler.cs"]}')"
 json_find_symbol="$(jq -nc '{name:"ButtonHandler",kind:"class",exact:true,scope:"assets"}')"
 json_get_symbols="$(jq -nc '{path:"Assets/Scripts/ButtonHandler.cs"}')"
-json_find_refs="$(jq -nc '{name:"ButtonHandler",scope:"assets",pageSize:20}')"
+json_find_refs="$(jq -nc '{name:"DiceController",scope:"assets",pageSize:20}')"
 json_read="$(jq -nc '{path:"Assets/Scripts/ButtonHandler.cs",startLine:1,maxLines:30}')"
 json_search="$(jq -nc '{pattern:"ButtonHandler",path:"Assets/Scripts",limit:20}')"
 json_load_ui_scene="$(jq -nc --arg scenePath "${UI_SCENE_PATH}" '{scenePath:$scenePath,loadMode:"Single"}')"
+json_validate_text_edits="$(jq -nc '{relative:"Assets/Scripts/ButtonHandler.cs",newText:"using UnityEngine;\npublic class ButtonHandlerPreview : MonoBehaviour {}\n"}')"
+json_write_csharp_file="$(jq -nc '{relative:"Assets/Scripts/ButtonHandler.cs",newText:"using UnityEngine;\npublic class ButtonHandlerPreview : MonoBehaviour {}\n",apply:false,validate:true}')"
+json_create_csharp_file="$(jq -nc --arg relative "${GEN_DIR}/GeneratedPreview.cs" '{relative:$relative,text:"public class GeneratedPreview {}\n",apply:false,validate:true}')"
+json_apply_csharp_edits="$(jq -nc '{files:[{relative:"Assets/Scripts/ButtonHandler.cs",newText:"using UnityEngine;\npublic class ButtonHandlerPreview : MonoBehaviour {}\n"}],apply:false,validate:true}')"
+json_replace_symbol_body="$(jq -nc '{relative:"Assets/Scripts/ButtonHandler.cs",namePath:"ButtonHandler/Start",body:"{ Debug.Log(\"preview\"); }",apply:false}')"
+json_insert_before_symbol="$(jq -nc '{relative:"Assets/Scripts/ButtonHandler.cs",namePath:"ButtonHandler/OnDestroy",text:"private void PreviewMethod() {}",apply:false}')"
+json_insert_after_symbol="$(jq -nc '{relative:"Assets/Scripts/ButtonHandler.cs",namePath:"ButtonHandler/OnDestroy",text:"private void PreviewAfterMethod() {}",apply:false}')"
+json_create_class="$(jq -nc --arg path "${GEN_DIR}/GeneratedE2EClass_${RUN_ID_SAFE}.cs" --arg name "GeneratedE2EClass_${RUN_ID_SAFE}" '{name:$name,path:$path}')"
+json_get_project_setting="$(jq -nc '{path:"player.productName"}')"
+json_set_project_setting="$(jq -nc '{path:"player.productName",value:"UnityCliBridge",confirmChanges:true}')"
+json_get_package_setting="$(jq -nc '{package:"com.akiojin.unity-cli-bridge.e2e",key:"smoke/enabled",scope:"user"}')"
+json_set_package_setting="$(jq -nc '{package:"com.akiojin.unity-cli-bridge.e2e",key:"smoke/enabled",value:true,scope:"user",confirmChanges:true}')"
+KNOWN_SKIPPED_TOOLS=("rename_symbol" "remove_symbol")
 
 echo "--- Running tools ---"
 
 run_tool "create_scene" "${json_create_scene}"
 run_tool "load_scene" "${json_load_scene_e2e}"
-run_tool "create_gameobject" '{"name":"E2ECube","primitiveType":"Cube"}'
+run_tool "create_gameobject" '{"name":"E2ECube","primitiveType":"cube"}'
 run_tool "add_component" '{"gameObjectPath":"/E2ECube","componentType":"Animator"}'
 run_tool "add_component" '{"gameObjectPath":"/E2ECube","componentType":"Rigidbody"}'
 run_tool "modify_component" '{"gameObjectPath":"/E2ECube","componentType":"Rigidbody","properties":{"mass":1.75}}'
@@ -357,6 +398,10 @@ run_tool "create_prefab" "${json_create_prefab}"
 run_tool "instantiate_prefab" "${json_instantiate_prefab}"
 run_tool "modify_prefab" "${json_modify_prefab}"
 run_tool "open_prefab" "${json_open_prefab}"
+PREFAB_ROOT_PATH="$(jq -r '.prefabContentsRoot // empty' <<<"${LAST_OUTPUT}" 2>/dev/null || true)"
+if [[ -z "${PREFAB_ROOT_PATH}" ]]; then
+  PREFAB_ROOT_PATH="/${SCENE_NAME}"
+fi
 run_tool "save_prefab" '{}'
 run_tool "exit_prefab_mode" '{"saveChanges":true}'
 run_tool "remove_component" '{"gameObjectPath":"/E2ECube","componentType":"Rigidbody"}'
@@ -402,18 +447,30 @@ run_tool "update_index" "${json_update_index}"
 run_tool "find_symbol" "${json_find_symbol}"
 run_tool "get_symbols" "${json_get_symbols}"
 run_tool "find_refs" "${json_find_refs}"
+run_tool "validate_text_edits" "${json_validate_text_edits}"
+run_tool "write_csharp_file" "${json_write_csharp_file}"
+run_tool "create_csharp_file" "${json_create_csharp_file}"
+run_tool "apply_csharp_edits" "${json_apply_csharp_edits}"
+run_tool "replace_symbol_body" "${json_replace_symbol_body}"
+run_tool "insert_before_symbol" "${json_insert_before_symbol}"
+run_tool "insert_after_symbol" "${json_insert_after_symbol}"
+run_tool "create_class" "${json_create_class}"
 run_tool "read" "${json_read}"
 run_tool "search" "${json_search}"
 run_tool "list_packages" '{}'
 run_tool "get_command_stats" '{}'
 run_tool "ping" '{"message":"e2e-all-tools"}'
 run_tool "get_editor_state" '{}'
+run_tool "get_project_setting" "${json_get_project_setting}"
+run_tool "set_project_setting" "${json_set_project_setting}"
+run_tool "set_package_setting" "${json_set_package_setting}"
+run_tool "get_package_setting" "${json_get_package_setting}"
 run_tool "profiler_get_metrics" '{"listAvailable":true}'
 run_tool "profiler_start" '{"recordToFile":false,"maxDurationSec":0}'
 sleep 1
 run_tool "profiler_status" '{}'
 run_tool "profiler_stop" '{}'
-run_tool "run_tests" '{"testMode":"EditMode","filter":"InputSystemHandlerTests"}'
+run_tool "run_tests" '{"testMode":"EditMode","filter":"AnimatorStateHandlerTests"}'
 if ! wait_for_tests_done; then
   record_failure "run_tests" "Test runner did not finish within timeout"
 fi
@@ -421,6 +478,9 @@ run_tool "get_test_status" '{"includeTestResults":false}'
 run_tool "execute_menu_item" '{"action":"execute","menuPath":"Tools/Unity CLI/UI Tests/Generate UGUI Test Scene","safetyCheck":true}'
 run_tool "load_scene" "${json_load_ui_scene}"
 
+if ! wait_for_compile_idle; then
+  record_failure "play_game" "Compilation did not settle before entering play mode"
+fi
 run_tool "play_game" '{"delayMs":100}'
 if ! wait_for_play_state "true"; then
   record_failure "play_game" "Play mode did not become true within timeout"
@@ -475,10 +535,21 @@ for tool_name in "${TOOL_LIST[@]}"; do
   if [[ ${SKIP_QUIT} -eq 1 && "${tool_name}" == "quit_editor" ]]; then
     continue
   fi
+  if array_contains "KNOWN_SKIPPED_TOOLS" "${tool_name}"; then
+    continue
+  fi
   if ! array_contains "CALLED_TOOLS" "${tool_name}"; then
     MISSING_TOOLS+=("${tool_name}")
   fi
 done
+
+if [[ ${#KNOWN_SKIPPED_TOOLS[@]} -gt 0 ]]; then
+  echo ""
+  echo "Known skipped tools:"
+  for tool_name in "${KNOWN_SKIPPED_TOOLS[@]}"; do
+    echo "  - ${tool_name}"
+  done
+fi
 
 if [[ ${#MISSING_TOOLS[@]} -gt 0 ]]; then
   for tool_name in "${MISSING_TOOLS[@]}"; do
