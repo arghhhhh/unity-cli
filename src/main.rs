@@ -19,8 +19,8 @@ use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
 
 use crate::cli::{
-    Cli, Command, InstancesCommand, LspCommand, LspdCommand, OutputFormat, RawArgs, SceneCommand,
-    SystemCommand, ToolCommand, UnitydCommand,
+    Cli, CliCommand, Command, InstancesCommand, LspCommand, LspdCommand, OutputFormat, RawArgs,
+    SceneCommand, SystemCommand, ToolCommand, UnitydCommand,
 };
 use crate::config::RuntimeConfig;
 use crate::instances::{list_instances, set_active_instance};
@@ -164,6 +164,16 @@ async fn run_with_cli(cli: Cli) -> Result<()> {
             }
             LspCommand::Doctor => {
                 let value = lsp_manager::doctor()?;
+                print_value(&value, cli.output)?;
+            }
+        },
+        Command::Cli { command } => match command {
+            CliCommand::Install { force } => {
+                let value = lsp_manager::cli_install_latest(*force)?;
+                print_value(&value, cli.output)?;
+            }
+            CliCommand::Doctor => {
+                let value = lsp_manager::cli_doctor()?;
                 print_value(&value, cli.output)?;
             }
         },

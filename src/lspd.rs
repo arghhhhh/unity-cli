@@ -42,8 +42,68 @@ enum ConnectionAction {
     Stop,
 }
 
+fn daemon_command_path() -> Result<PathBuf> {
+    Ok(lsp_manager::ensure_latest_cli_for_daemon()?.binary_path)
+}
+
+fn append_managed_status(payload: &mut Value) {
+    let Some(map) = payload.as_object_mut() else {
+        return;
+    };
+
+    if let Some(path) = std::env::current_exe()
+        .ok()
+        .map(|path| path.to_string_lossy().to_string())
+    {
+        map.insert("daemonBinaryPath".to_string(), Value::String(path));
+    }
+
+    if let Ok(cli_status) = lsp_manager::cli_status() {
+        map.insert(
+            "managedBinaryPath".to_string(),
+            Value::String(cli_status.binary_path.to_string_lossy().to_string()),
+        );
+        map.insert(
+            "localVersion".to_string(),
+            cli_status
+                .local_version
+                .clone()
+                .map(Value::String)
+                .unwrap_or(Value::Null),
+        );
+        map.insert(
+            "latest".to_string(),
+            cli_status
+                .to_json()
+                .get("latest")
+                .cloned()
+                .unwrap_or(Value::Null),
+        );
+        map.insert(
+            "updateAvailable".to_string(),
+            Value::Bool(cli_status.update_available),
+        );
+        map.insert("cli".to_string(), cli_status.to_json());
+    }
+
+    if let Ok(lsp_status) = lsp_manager::lsp_status() {
+        map.insert(
+            "binaryPath".to_string(),
+            Value::String(lsp_status.binary_path.to_string_lossy().to_string()),
+        );
+        map.insert(
+            "version".to_string(),
+            lsp_status
+                .local_version
+                .clone()
+                .map(Value::String)
+                .unwrap_or(Value::Null),
+        );
+        map.insert("lsp".to_string(), lsp_status.to_json());
+    }
+}
+
 pub fn start_background() -> Result<Value> {
-    let _ = lsp_manager::ensure_local(false)?;
     if let Ok(status) = status() {
         if status
             .get("running")
@@ -60,9 +120,10 @@ pub fn start_background() -> Result<Value> {
     }
 
     cleanup_stale_files();
+    let _ = lsp_manager::ensure_latest_lsp_for_daemon()?;
 
-    let exe = std::env::current_exe().context("Failed to resolve current executable path")?;
-    Command::new(exe)
+    let exe = daemon_command_path()?;
+    Command::new(&exe)
         .arg("lspd")
         .arg("serve")
         .stdin(Stdio::null())
@@ -111,23 +172,25 @@ pub fn stop() -> Result<Value> {
 }
 
 pub fn status() -> Result<Value> {
-    match request(DaemonRequest::Status) {
+    let mut value = match request(DaemonRequest::Status) {
         Ok(response) => {
             if response.ok {
-                Ok(response
+                response
                     .result
-                    .unwrap_or_else(|| json!({ "running": true })))
+                    .unwrap_or_else(|| json!({ "running": true }))
             } else {
-                Ok(json!({
+                json!({
                     "running": false,
                     "error": response.error.unwrap_or_else(|| "status failed".to_string())
-                }))
+                })
             }
         }
-        Err(_) => Ok(json!({
+        Err(_) => json!({
             "running": false
-        })),
-    }
+        }),
+    };
+    append_managed_status(&mut value);
+    Ok(value)
 }
 
 pub fn call_tool(tool_name: &str, params: &Value, project_root: &Path) -> Result<Value> {
@@ -221,13 +284,15 @@ fn handle_request(request: DaemonRequest) -> Result<(DaemonResponse, ConnectionA
         DaemonRequest::Status => Ok((
             DaemonResponse {
                 ok: true,
-                result: Some(json!({
-                    "running": true,
-                    "pid": std::process::id(),
-                    "rid": lsp_manager::detect_rid(),
-                    "binaryPath": lsp_manager::binary_path().ok().map(|path| path.to_string_lossy().to_string()),
-                    "version": lsp_manager::read_local_version()
-                })),
+                result: Some({
+                    let mut value = json!({
+                        "running": true,
+                        "pid": std::process::id(),
+                        "rid": lsp_manager::detect_rid(),
+                    });
+                    append_managed_status(&mut value);
+                    value
+                }),
                 error: None,
             },
             ConnectionAction::Continue,
@@ -641,6 +706,21 @@ mod tests {
                 .and_then(serde_json::Value::as_bool),
             Some(true)
         );
+        assert!(status_resp
+            .result
+            .as_ref()
+            .and_then(|v| v.get("managedBinaryPath"))
+            .is_some());
+        assert!(status_resp
+            .result
+            .as_ref()
+            .and_then(|v| v.get("cli"))
+            .is_some());
+        assert!(status_resp
+            .result
+            .as_ref()
+            .and_then(|v| v.get("lsp"))
+            .is_some());
         assert!(matches!(status_action, ConnectionAction::Continue));
 
         let (stop_resp, stop_action) = handle_request(DaemonRequest::Stop).expect("stop must work");

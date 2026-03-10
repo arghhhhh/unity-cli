@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io::{self, Read, Write};
@@ -14,8 +15,41 @@ const DOWNLOAD_TIMEOUT_SECS: u64 = 30;
 const HTTP_MAX_ATTEMPTS: usize = 3;
 const HTTP_RETRY_BASE_DELAY_MILLIS: u64 = 250;
 const USER_AGENT_VALUE: &str = "unity-cli";
-const MANIFEST_REPOS: &[&str] = &["akiojin/unity-cli"];
 const GITHUB_TOKEN_ENV_VARS: &[&str] = &["GITHUB_TOKEN", "GH_TOKEN"];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManagedBinary {
+    CSharpLsp,
+    UnityCli,
+}
+
+#[derive(Debug, Clone)]
+pub struct ManagedBinaryStatus {
+    pub managed_binary: ManagedBinary,
+    pub rid: &'static str,
+    pub binary_path: PathBuf,
+    pub binary_exists: bool,
+    pub local_version: Option<String>,
+    pub latest: Option<LatestVersion>,
+    pub latest_error: Option<String>,
+    pub update_available: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct LatestVersion {
+    pub repo: String,
+    pub tag: String,
+    pub version: String,
+}
+
+#[derive(Debug, Clone)]
+struct ManagedBinarySpec {
+    key: &'static str,
+    install_subdir: &'static str,
+    manifest_name: &'static str,
+    executable_name: &'static str,
+    repos: &'static [&'static str],
+}
 
 #[derive(Debug, Deserialize)]
 struct ReleaseInfo {
@@ -23,17 +57,80 @@ struct ReleaseInfo {
 }
 
 #[derive(Debug, Deserialize)]
-struct LspManifest {
+struct ReleaseManifest {
     #[serde(default)]
     version: Option<String>,
     #[serde(default)]
-    assets: std::collections::HashMap<String, LspAsset>,
+    assets: HashMap<String, ReleaseAsset>,
 }
 
-#[derive(Debug, Deserialize)]
-struct LspAsset {
+#[derive(Debug, Clone, Deserialize)]
+struct ReleaseAsset {
     url: String,
     sha256: String,
+}
+
+#[derive(Debug, Clone)]
+struct LatestRelease {
+    repo: String,
+    tag: String,
+    version: String,
+    asset: ReleaseAsset,
+}
+
+impl ManagedBinary {
+    fn spec(self) -> ManagedBinarySpec {
+        match self {
+            Self::CSharpLsp => ManagedBinarySpec {
+                key: "csharp-lsp",
+                install_subdir: "csharp-lsp",
+                manifest_name: "csharp-lsp-manifest.json",
+                executable_name: if cfg!(target_os = "windows") {
+                    "server.exe"
+                } else {
+                    "server"
+                },
+                repos: &["akiojin/unity-cli"],
+            },
+            Self::UnityCli => ManagedBinarySpec {
+                key: "unity-cli",
+                install_subdir: "unity-cli",
+                manifest_name: "unity-cli-manifest.json",
+                executable_name: if cfg!(target_os = "windows") {
+                    "unity-cli.exe"
+                } else {
+                    "unity-cli"
+                },
+                repos: &["akiojin/unity-cli"],
+            },
+        }
+    }
+}
+
+impl ManagedBinaryStatus {
+    pub fn to_json(&self) -> Value {
+        let latest = self.latest.as_ref().map(|latest| {
+            json!({
+                "repo": latest.repo,
+                "tag": latest.tag,
+                "version": latest.version
+            })
+        });
+
+        json!({
+            "success": true,
+            "managed": true,
+            "key": self.managed_binary.spec().key,
+            "rid": self.rid,
+            "binaryPath": self.binary_path.to_string_lossy().to_string(),
+            "managedBinaryPath": self.binary_path.to_string_lossy().to_string(),
+            "binaryExists": self.binary_exists,
+            "localVersion": self.local_version,
+            "latest": latest,
+            "latestError": self.latest_error,
+            "updateAvailable": self.update_available
+        })
+    }
 }
 
 pub fn detect_rid() -> &'static str {
@@ -56,12 +153,9 @@ pub fn detect_rid() -> &'static str {
     }
 }
 
+#[cfg(test)]
 pub fn executable_name() -> &'static str {
-    if cfg!(target_os = "windows") {
-        "server.exe"
-    } else {
-        "server"
-    }
+    ManagedBinary::CSharpLsp.spec().executable_name
 }
 
 pub fn tools_root() -> Result<PathBuf> {
@@ -73,19 +167,68 @@ pub fn tools_root() -> Result<PathBuf> {
 }
 
 pub fn install_dir() -> Result<PathBuf> {
-    Ok(tools_root()?.join("csharp-lsp").join(detect_rid()))
+    install_dir_for(ManagedBinary::CSharpLsp)
 }
 
+#[cfg(test)]
 pub fn binary_path() -> Result<PathBuf> {
-    Ok(install_dir()?.join(executable_name()))
+    binary_path_for(ManagedBinary::CSharpLsp)
 }
 
+#[cfg(test)]
 pub fn version_path() -> Result<PathBuf> {
-    Ok(install_dir()?.join("VERSION"))
+    version_path_for(ManagedBinary::CSharpLsp)
 }
 
+#[cfg(test)]
 pub fn read_local_version() -> Option<String> {
-    let path = version_path().ok()?;
+    read_local_version_for(ManagedBinary::CSharpLsp)
+}
+
+pub fn cli_install_latest(force_download: bool) -> Result<Value> {
+    Ok(install_latest_for(ManagedBinary::UnityCli, force_download)?.to_json())
+}
+
+pub fn cli_doctor() -> Result<Value> {
+    Ok(doctor_for(ManagedBinary::UnityCli)?.to_json())
+}
+
+pub fn cli_status() -> Result<ManagedBinaryStatus> {
+    inspect_for(ManagedBinary::UnityCli)
+}
+
+pub fn lsp_status() -> Result<ManagedBinaryStatus> {
+    inspect_for(ManagedBinary::CSharpLsp)
+}
+
+pub fn ensure_latest_cli_for_daemon() -> Result<ManagedBinaryStatus> {
+    ensure_latest_for(ManagedBinary::UnityCli, false, true)
+}
+
+pub fn ensure_latest_lsp_for_daemon() -> Result<ManagedBinaryStatus> {
+    ensure_latest_for(ManagedBinary::CSharpLsp, false, true)
+}
+
+pub fn lsp_install_latest(force_download: bool) -> Result<ManagedBinaryStatus> {
+    install_latest_for(ManagedBinary::CSharpLsp, force_download)
+}
+
+fn install_dir_for(managed_binary: ManagedBinary) -> Result<PathBuf> {
+    Ok(tools_root()?
+        .join(managed_binary.spec().install_subdir)
+        .join(detect_rid()))
+}
+
+fn binary_path_for(managed_binary: ManagedBinary) -> Result<PathBuf> {
+    Ok(install_dir_for(managed_binary)?.join(managed_binary.spec().executable_name))
+}
+
+fn version_path_for(managed_binary: ManagedBinary) -> Result<PathBuf> {
+    Ok(install_dir_for(managed_binary)?.join("VERSION"))
+}
+
+fn read_local_version_for(managed_binary: ManagedBinary) -> Option<String> {
+    let path = version_path_for(managed_binary).ok()?;
     fs::read_to_string(path)
         .ok()
         .map(|value| value.trim().to_string())
@@ -93,68 +236,128 @@ pub fn read_local_version() -> Option<String> {
 }
 
 pub fn ensure_local(force_download: bool) -> Result<PathBuf> {
-    let path = binary_path()?;
+    ensure_local_for(ManagedBinary::CSharpLsp, force_download)
+}
+
+fn ensure_local_for(managed_binary: ManagedBinary, force_download: bool) -> Result<PathBuf> {
+    let path = binary_path_for(managed_binary)?;
     if path.exists() && !force_download {
         return Ok(path);
     }
 
-    download_latest_binary(&path)
+    let status = install_latest_for(managed_binary, true)?;
+    Ok(status.binary_path)
 }
 
 pub fn install_latest() -> Result<Value> {
-    let binary = ensure_local(true)?;
-    Ok(json!({
-        "success": true,
-        "rid": detect_rid(),
-        "binaryPath": binary.to_string_lossy().to_string(),
-        "version": read_local_version()
-    }))
+    Ok(lsp_install_latest(true)?.to_json())
 }
 
 pub fn doctor() -> Result<Value> {
-    let rid = detect_rid().to_string();
-    let root = tools_root()?;
-    let binary = binary_path()?;
-    let version = read_local_version();
-
-    let latest = fetch_latest_manifest().ok().map(|(manifest, repo, tag)| {
-        json!({
-            "repo": repo,
-            "tag": tag,
-            "version": manifest.version
-        })
-    });
-
-    Ok(json!({
-        "success": true,
-        "rid": rid,
-        "toolsRoot": root.to_string_lossy().to_string(),
-        "binaryPath": binary.to_string_lossy().to_string(),
-        "binaryExists": binary.exists(),
-        "localVersion": version,
-        "latest": latest
-    }))
+    Ok(doctor_for(ManagedBinary::CSharpLsp)?.to_json())
 }
 
-fn download_latest_binary(dest: &Path) -> Result<PathBuf> {
-    let rid = detect_rid();
-    let (manifest, _repo, tag) = fetch_latest_manifest()?;
-    let asset = manifest
-        .assets
-        .get(rid)
-        .ok_or_else(|| anyhow!("manifest missing asset for RID: {rid}"))?;
+fn inspect_for(managed_binary: ManagedBinary) -> Result<ManagedBinaryStatus> {
+    let binary_path = binary_path_for(managed_binary)?;
+    Ok(ManagedBinaryStatus {
+        managed_binary,
+        rid: detect_rid(),
+        binary_exists: binary_path.exists(),
+        local_version: read_local_version_for(managed_binary),
+        latest: None,
+        latest_error: None,
+        update_available: false,
+        binary_path,
+    })
+}
 
+fn doctor_for(managed_binary: ManagedBinary) -> Result<ManagedBinaryStatus> {
+    let mut status = inspect_for(managed_binary)?;
+    match fetch_latest_release(managed_binary) {
+        Ok(latest) => {
+            status.update_available =
+                status.local_version.as_deref() != Some(latest.version.as_str());
+            status.latest = Some(LatestVersion {
+                repo: latest.repo,
+                tag: latest.tag,
+                version: latest.version,
+            });
+        }
+        Err(error) => {
+            status.latest_error = Some(error.to_string());
+        }
+    }
+    Ok(status)
+}
+
+fn install_latest_for(
+    managed_binary: ManagedBinary,
+    force_download: bool,
+) -> Result<ManagedBinaryStatus> {
+    ensure_latest_for(managed_binary, force_download, false)
+}
+
+fn ensure_latest_for(
+    managed_binary: ManagedBinary,
+    force_download: bool,
+    allow_stale_existing: bool,
+) -> Result<ManagedBinaryStatus> {
+    let mut status = inspect_for(managed_binary)?;
+    if should_skip_remote_checks_for_tests() {
+        if status.binary_exists || allow_stale_existing {
+            return Ok(status);
+        }
+        return Err(anyhow!(
+            "managed {} binary is missing while test remote checks are disabled",
+            managed_binary.spec().key
+        ));
+    }
+
+    match fetch_latest_release(managed_binary) {
+        Ok(latest) => {
+            status.update_available =
+                status.local_version.as_deref() != Some(latest.version.as_str());
+            status.latest = Some(LatestVersion {
+                repo: latest.repo.clone(),
+                tag: latest.tag.clone(),
+                version: latest.version.clone(),
+            });
+            if force_download || !status.binary_exists || status.update_available {
+                download_latest_binary(managed_binary, &latest, &status.binary_path)?;
+                status.binary_exists = true;
+                status.local_version = Some(latest.version);
+                status.update_available = false;
+                status.latest_error = None;
+            }
+            Ok(status)
+        }
+        Err(error) if allow_stale_existing && status.binary_exists => {
+            status.latest_error = Some(error.to_string());
+            Ok(status)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn download_latest_binary(
+    managed_binary: ManagedBinary,
+    latest: &LatestRelease,
+    dest: &Path,
+) -> Result<PathBuf> {
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("Failed to create install directory: {}", parent.display()))?;
     }
 
     let tmp = dest.with_extension("download");
-    download_to(&asset.url, &tmp)?;
+    download_to(&latest.asset.url, &tmp)?;
     let actual = sha256_file(&tmp)?;
-    if !actual.eq_ignore_ascii_case(&asset.sha256) {
+    if !actual.eq_ignore_ascii_case(&latest.asset.sha256) {
         let _ = fs::remove_file(&tmp);
-        return Err(anyhow!("checksum mismatch for downloaded LSP binary"));
+        return Err(anyhow!(
+            "checksum mismatch for downloaded {} binary",
+            managed_binary.spec().key
+        ));
     }
 
     replace_file_atomic(&tmp, dest)?;
@@ -166,16 +369,17 @@ fn download_latest_binary(dest: &Path) -> Result<PathBuf> {
         fs::set_permissions(dest, permissions)?;
     }
 
-    let version = manifest
-        .version
-        .unwrap_or_else(|| tag.trim_start_matches('v').to_string());
-    write_local_version(&version)?;
-
+    write_local_version_for(managed_binary, &latest.version)?;
     Ok(dest.to_path_buf())
 }
 
+#[cfg(test)]
 fn write_local_version(version: &str) -> Result<()> {
-    let path = version_path()?;
+    write_local_version_for(ManagedBinary::CSharpLsp, version)
+}
+
+fn write_local_version_for(managed_binary: ManagedBinary, version: &str) -> Result<()> {
+    let path = version_path_for(managed_binary)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("Failed to create VERSION directory: {}", parent.display()))?;
@@ -184,32 +388,51 @@ fn write_local_version(version: &str) -> Result<()> {
         .with_context(|| format!("Failed to write VERSION marker: {}", path.display()))
 }
 
-fn fetch_latest_manifest() -> Result<(LspManifest, String, String)> {
+fn fetch_latest_release(managed_binary: ManagedBinary) -> Result<LatestRelease> {
     let mut errors = Vec::new();
-    for repo in MANIFEST_REPOS {
-        match fetch_latest_manifest_for_repo(repo) {
-            Ok((manifest, tag)) => return Ok((manifest, (*repo).to_string(), tag)),
+    for repo in managed_binary.spec().repos {
+        match fetch_latest_release_for_repo(managed_binary, repo) {
+            Ok(release) => return Ok(release),
             Err(error) => errors.push(format!("{repo}: {error}")),
         }
     }
 
     Err(anyhow!(
-        "Failed to fetch csharp-lsp manifest from known repositories: {}",
+        "Failed to fetch {} manifest from known repositories: {}",
+        managed_binary.spec().key,
         errors.join(" | ")
     ))
 }
 
-fn fetch_latest_manifest_for_repo(repo: &str) -> Result<(LspManifest, String)> {
+fn fetch_latest_release_for_repo(
+    managed_binary: ManagedBinary,
+    repo: &str,
+) -> Result<LatestRelease> {
     let release_url = format!("https://api.github.com/repos/{repo}/releases/latest");
     let release: ReleaseInfo = get_json(&release_url)?;
 
     let tag = release.tag_name;
-    let manifest_url =
-        format!("https://github.com/{repo}/releases/download/{tag}/csharp-lsp-manifest.json");
+    let manifest_url = format!(
+        "https://github.com/{repo}/releases/download/{tag}/{}",
+        managed_binary.spec().manifest_name
+    );
 
-    let manifest: LspManifest = get_json(&manifest_url)?;
+    let manifest: ReleaseManifest = get_json(&manifest_url)?;
+    let version = manifest
+        .version
+        .unwrap_or_else(|| tag.trim_start_matches('v').to_string());
+    let asset = manifest
+        .assets
+        .get(detect_rid())
+        .cloned()
+        .ok_or_else(|| anyhow!("manifest missing asset for RID: {}", detect_rid()))?;
 
-    Ok((manifest, tag))
+    Ok(LatestRelease {
+        repo: repo.to_string(),
+        tag,
+        version,
+        asset,
+    })
 }
 
 fn download_to(url: &str, dest: &Path) -> Result<()> {
@@ -321,6 +544,16 @@ fn github_token_from_env() -> Option<String> {
         }
     }
     None
+}
+
+fn should_skip_remote_checks_for_tests() -> bool {
+    cfg!(test)
+        && matches!(
+            std::env::var("UNITY_CLI_TEST_SKIP_MANAGED_UPDATE")
+                .ok()
+                .as_deref(),
+            Some("1") | Some("true") | Some("yes")
+        )
 }
 
 fn get_json<T: for<'de> Deserialize<'de>>(url: &str) -> Result<T> {
@@ -499,6 +732,40 @@ mod tests {
     }
 
     #[test]
+    fn unity_cli_status_uses_managed_install_layout() {
+        let _guard = env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let dir = tempdir().expect("tempdir should succeed");
+        let _env = EnvVarGuard::set(
+            "UNITY_CLI_TOOLS_ROOT",
+            dir.path()
+                .to_str()
+                .expect("tempdir path should be valid UTF-8"),
+        );
+
+        let binary = binary_path_for(ManagedBinary::UnityCli).expect("binary path should resolve");
+        if let Some(parent) = binary.parent() {
+            fs::create_dir_all(parent).expect("binary parent directory should be created");
+        }
+        fs::write(&binary, b"managed-unity-cli").expect("binary fixture should be writable");
+        write_local_version_for(ManagedBinary::UnityCli, "0.3.0")
+            .expect("unity-cli version should be writable");
+
+        let status = cli_status().expect("cli status should succeed");
+        assert_eq!(status.binary_path, binary);
+        assert!(status.binary_exists);
+        assert_eq!(status.local_version.as_deref(), Some("0.3.0"));
+        let json = status.to_json();
+        assert_eq!(json["managed"], true);
+        assert_eq!(json["key"], "unity-cli");
+        assert_eq!(
+            json["managedBinaryPath"].as_str(),
+            Some(binary.to_string_lossy().as_ref())
+        );
+    }
+
+    #[test]
     fn read_local_version_returns_none_for_missing_or_blank_file() {
         let _guard = env_lock()
             .lock()
@@ -542,6 +809,34 @@ mod tests {
 
         let resolved = ensure_local(false).expect("existing binary should be reused");
         assert_eq!(resolved, binary);
+    }
+
+    #[test]
+    fn ensure_latest_for_can_skip_remote_checks_in_tests() {
+        let _guard = env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let dir = tempdir().expect("tempdir should succeed");
+        let _env = EnvVarGuard::set(
+            "UNITY_CLI_TOOLS_ROOT",
+            dir.path()
+                .to_str()
+                .expect("tempdir path should be valid UTF-8"),
+        );
+        let _skip = EnvVarGuard::set("UNITY_CLI_TEST_SKIP_MANAGED_UPDATE", "1");
+
+        let binary =
+            binary_path_for(ManagedBinary::UnityCli).expect("unity-cli binary path should resolve");
+        if let Some(parent) = binary.parent() {
+            fs::create_dir_all(parent).expect("binary parent directory should be created");
+        }
+        fs::write(&binary, b"managed-unity-cli").expect("binary fixture should be writable");
+
+        let status = ensure_latest_for(ManagedBinary::UnityCli, false, true)
+            .expect("skip flag should avoid remote fetch");
+        assert_eq!(status.binary_path, binary);
+        assert!(status.binary_exists);
+        assert!(status.latest.is_none());
     }
 
     #[test]

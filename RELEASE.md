@@ -17,7 +17,7 @@ Run the publish script from the repository root:
 5. Commits the version sync, creates `vX.Y.Z`, and runs `cargo publish`
 6. Pushes the release commit and tag
 
-After the push, GitHub Actions `release.yml` builds the release binaries and uploads the GitHub Release assets.
+After the push, GitHub Actions `release.yml` builds the release binaries, generates managed-binary manifests, and uploads the GitHub Release assets.
 
 ## Tag Convention
 
@@ -60,6 +60,7 @@ Jobs:
 | `create-tag` | Creates the release tag if it does not exist yet |
 | `build` | Matrix build for `unity-cli` release binaries |
 | `build-lsp` | Matrix build for the bundled C# LSP binaries |
+| `upload-release` manifest step | Generates `unity-cli-manifest.json` and `csharp-lsp-manifest.json` with RID-specific URLs and SHA-256 digests |
 | `upload-release` | Uploads all built artifacts to the GitHub Release |
 
 Release artifacts include:
@@ -68,6 +69,7 @@ Release artifacts include:
 - `unity-cli-linux-arm64`
 - `unity-cli-macos-arm64`
 - `unity-cli-windows-x64.exe`
+- `unity-cli-manifest.json`
 - `csharp-lsp-linux-x64`
 - `csharp-lsp-linux-arm64`
 - `csharp-lsp-osx-arm64`

@@ -13,6 +13,7 @@ use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
 use crate::config::RuntimeConfig;
+use crate::lsp_manager;
 use crate::transport::UnityClient;
 
 const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 600;
@@ -103,8 +104,7 @@ impl ConnectionPool {
 }
 
 fn tools_dir() -> Result<PathBuf> {
-    let home = dirs::home_dir().ok_or_else(|| anyhow!("Cannot determine home directory"))?;
-    let dir = home.join(".unity").join("tools");
+    let dir = lsp_manager::tools_root()?;
     fs::create_dir_all(&dir)
         .with_context(|| format!("Failed to create tools directory: {}", dir.display()))?;
     Ok(dir)
@@ -150,6 +150,51 @@ fn cleanup_stale_files() {
     }
 }
 
+fn daemon_command_path() -> Result<PathBuf> {
+    Ok(lsp_manager::ensure_latest_cli_for_daemon()?.binary_path)
+}
+
+fn append_cli_status(payload: &mut Value) {
+    let Some(map) = payload.as_object_mut() else {
+        return;
+    };
+
+    if let Some(path) = std::env::current_exe()
+        .ok()
+        .map(|path| path.to_string_lossy().to_string())
+    {
+        map.insert("daemonBinaryPath".to_string(), Value::String(path));
+    }
+
+    if let Ok(cli_status) = lsp_manager::cli_status() {
+        map.insert(
+            "managedBinaryPath".to_string(),
+            Value::String(cli_status.binary_path.to_string_lossy().to_string()),
+        );
+        map.insert(
+            "localVersion".to_string(),
+            cli_status
+                .local_version
+                .clone()
+                .map(Value::String)
+                .unwrap_or(Value::Null),
+        );
+        map.insert(
+            "latest".to_string(),
+            cli_status
+                .to_json()
+                .get("latest")
+                .cloned()
+                .unwrap_or(Value::Null),
+        );
+        map.insert(
+            "updateAvailable".to_string(),
+            Value::Bool(cli_status.update_available),
+        );
+        map.insert("cli".to_string(), cli_status.to_json());
+    }
+}
+
 pub fn start_background() -> Result<Value> {
     if let Ok(status) = status() {
         if status
@@ -168,8 +213,8 @@ pub fn start_background() -> Result<Value> {
 
     cleanup_stale_files();
 
-    let exe = std::env::current_exe().context("Failed to resolve current executable path")?;
-    Command::new(exe)
+    let exe = daemon_command_path()?;
+    Command::new(&exe)
         .arg("unityd")
         .arg("serve")
         .stdin(Stdio::null())
@@ -218,23 +263,25 @@ pub fn stop() -> Result<Value> {
 }
 
 pub fn status() -> Result<Value> {
-    match request(DaemonRequest::Status) {
+    let mut value = match request(DaemonRequest::Status) {
         Ok(response) => {
             if response.ok {
-                Ok(response
+                response
                     .result
-                    .unwrap_or_else(|| json!({ "running": true })))
+                    .unwrap_or_else(|| json!({ "running": true }))
             } else {
-                Ok(json!({
+                json!({
                     "running": false,
                     "error": response.error.unwrap_or_else(|| "status failed".to_string())
-                }))
+                })
             }
         }
-        Err(_) => Ok(json!({
+        Err(_) => json!({
             "running": false
-        })),
-    }
+        }),
+    };
+    append_cli_status(&mut value);
+    Ok(value)
 }
 
 pub async fn try_call_tool(
@@ -467,11 +514,15 @@ async fn handle_request(
         DaemonRequest::Status => Ok((
             DaemonResponse {
                 ok: true,
-                result: Some(json!({
+                result: Some({
+                    let mut value = json!({
                     "running": true,
                     "pid": std::process::id(),
                     "connections": pool.connections.len(),
-                })),
+                    });
+                    append_cli_status(&mut value);
+                    value
+                }),
                 error: None,
             },
             ConnectionAction::Continue,
@@ -737,23 +788,66 @@ mod tests {
 
     #[test]
     fn tools_dir_creates_directory() {
+        let _guard = env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let home = tempdir().expect("tempdir should succeed");
+        let _home = EnvVarGuard::set(
+            "HOME",
+            home.path()
+                .to_str()
+                .expect("tempdir path should be valid UTF-8"),
+        );
         let dir = tools_dir().expect("tools_dir should succeed");
         assert!(dir.exists());
         assert!(dir.is_dir());
-        assert!(dir.ends_with(".unity/tools"));
+        assert_eq!(
+            dir,
+            crate::lsp_manager::tools_root().expect("shared tools root should resolve")
+        );
     }
 
     #[test]
     fn pid_file_path_is_under_tools_dir() {
+        let _guard = env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let home = tempdir().expect("tempdir should succeed");
+        let _home = EnvVarGuard::set(
+            "HOME",
+            home.path()
+                .to_str()
+                .expect("tempdir path should be valid UTF-8"),
+        );
         let path = pid_file_path().expect("pid_file_path should succeed");
-        assert!(path.to_string_lossy().contains(".unity/tools/unityd.pid"));
+        assert_eq!(
+            path,
+            tools_dir()
+                .expect("tools dir should resolve")
+                .join("unityd.pid")
+        );
     }
 
     #[cfg(unix)]
     #[test]
     fn socket_path_is_under_tools_dir() {
+        let _guard = env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let home = tempdir().expect("tempdir should succeed");
+        let _home = EnvVarGuard::set(
+            "HOME",
+            home.path()
+                .to_str()
+                .expect("tempdir path should be valid UTF-8"),
+        );
         let path = socket_path().expect("socket_path should succeed");
-        assert!(path.to_string_lossy().contains(".unity/tools/unityd.sock"));
+        assert_eq!(
+            path,
+            tools_dir()
+                .expect("tools dir should resolve")
+                .join("unityd.sock")
+        );
     }
 
     #[test]
@@ -808,6 +902,16 @@ mod tests {
                     .and_then(serde_json::Value::as_bool),
                 Some(true)
             );
+            assert!(status_resp
+                .result
+                .as_ref()
+                .and_then(|v| v.get("managedBinaryPath"))
+                .is_some());
+            assert!(status_resp
+                .result
+                .as_ref()
+                .and_then(|v| v.get("cli"))
+                .is_some());
             assert!(matches!(status_action, ConnectionAction::Continue));
 
             let (stop_resp, stop_action) = handle_request(DaemonRequest::Stop, &mut pool)

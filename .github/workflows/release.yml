@@ -234,27 +234,33 @@ jobs:
         with:
           path: artifacts
 
-      - name: Generate LSP manifest
+      - name: Generate managed binary manifests
         env:
           TAG: ${{ needs.create-tag.outputs.tag }}
           VERSION: ${{ needs.create-tag.outputs.version }}
           REPO: ${{ github.repository }}
         run: |
-          manifest="{\"version\":\"${VERSION}\",\"assets\":{"
-          first=true
-          for file in artifacts/csharp-lsp-*/csharp-lsp-*; do
-            name="$(basename "$file")"
-            # extract RID from artifact name: csharp-lsp-linux-x64 -> linux-x64
-            rid="${name#csharp-lsp-}"
-            sha="$(sha256sum "$file" | cut -d' ' -f1)"
-            url="https://github.com/${REPO}/releases/download/${TAG}/${name}"
-            if [ "$first" = true ]; then first=false; else manifest="${manifest},"; fi
-            manifest="${manifest}\"${rid}\":{\"url\":\"${url}\",\"sha256\":\"${sha}\"}"
-          done
-          manifest="${manifest}}}"
-          echo "$manifest" | python3 -m json.tool > artifacts/csharp-lsp-manifest.json
-          echo "Generated manifest:"
-          cat artifacts/csharp-lsp-manifest.json
+          generate_manifest() {
+            prefix="$1"
+            output="$2"
+            manifest="{\"version\":\"${VERSION}\",\"assets\":{"
+            first=true
+            for file in artifacts/${prefix}-*/${prefix}-*; do
+              name="$(basename "$file")"
+              rid="${name#${prefix}-}"
+              sha="$(sha256sum "$file" | cut -d' ' -f1)"
+              url="https://github.com/${REPO}/releases/download/${TAG}/${name}"
+              if [ "$first" = true ]; then first=false; else manifest="${manifest},"; fi
+              manifest="${manifest}\"${rid}\":{\"url\":\"${url}\",\"sha256\":\"${sha}\"}"
+            done
+            manifest="${manifest}}}"
+            echo "$manifest" | python3 -m json.tool > "artifacts/${output}"
+            echo "Generated ${output}:"
+            cat "artifacts/${output}"
+          }
+
+          generate_manifest "unity-cli" "unity-cli-manifest.json"
+          generate_manifest "csharp-lsp" "csharp-lsp-manifest.json"
 
       - name: Upload assets to GitHub Release
         uses: softprops/action-gh-release@v2
@@ -265,6 +271,7 @@ jobs:
             artifacts/unity-cli-linux-arm64/unity-cli-linux-arm64
             artifacts/unity-cli-macos-arm64/unity-cli-macos-arm64
             artifacts/unity-cli-windows-x64.exe/unity-cli-windows-x64.exe
+            artifacts/unity-cli-manifest.json
             artifacts/csharp-lsp-linux-x64/csharp-lsp-linux-x64
             artifacts/csharp-lsp-linux-arm64/csharp-lsp-linux-arm64
             artifacts/csharp-lsp-osx-arm64/csharp-lsp-osx-arm64

@@ -72,6 +72,16 @@ Connection check:
 unity-cli system ping
 ```
 
+Managed binary maintenance:
+
+```bash
+unity-cli cli doctor
+unity-cli cli install
+```
+
+`unityd` and `lspd` automatically refresh their managed `unity-cli` / C# LSP binaries on daemon startup.
+The managed copies live under `UNITY_CLI_TOOLS_ROOT` (or the OS default tools directory) and are updated without an interactive confirmation prompt.
+
 ## Skills (13)
 
 | Category | Skills |
