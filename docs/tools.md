@@ -11,12 +11,19 @@ Snapshot date: `2026-03-06`
 | `system` | `ping` |
 | `scene` | `create` |
 | `instances` | `list`, `set-active` |
+| `cli` | `install`, `doctor` |
 | `lsp` | `install`, `doctor` |
 | `lspd` | `start`, `stop`, `status` |
 | `unityd` | `start`, `stop`, `status` |
 | `batch` | (batch command execution) |
 
 Use `raw` for full command coverage when no typed subcommand exists.
+
+Managed binary notes:
+
+- `cli install` downloads or refreshes the managed `unity-cli` copy under `UNITY_CLI_TOOLS_ROOT` (or the OS default tools directory).
+- `cli doctor` reports the managed `unity-cli` path, local version, latest release metadata, and whether an update is pending.
+- `unityd` and `lspd` automatically refresh managed binaries on daemon startup without an interactive confirmation step.
 
 Global options:
 

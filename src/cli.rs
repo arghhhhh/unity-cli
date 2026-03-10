@@ -62,6 +62,10 @@ pub enum Command {
         #[command(subcommand)]
         command: LspCommand,
     },
+    Cli {
+        #[command(subcommand)]
+        command: CliCommand,
+    },
     Lspd {
         #[command(subcommand)]
         command: LspdCommand,
@@ -147,6 +151,15 @@ pub enum InstancesCommand {
 #[derive(Debug, Subcommand)]
 pub enum LspCommand {
     Install,
+    Doctor,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CliCommand {
+    Install {
+        #[arg(long, default_value_t = false)]
+        force: bool,
+    },
     Doctor,
 }
 

@@ -2004,6 +2004,7 @@ while True:
                 .to_str()
                 .expect("tools root path should be valid UTF-8"),
         );
+        let _skip_updates = EnvVarGuard::set("UNITY_CLI_TEST_SKIP_MANAGED_UPDATE", "1");
         let params = json!({"path":"Assets/Scripts/Player.cs"});
 
         std::env::set_var("UNITY_CLI_LSP_MODE", "off");
