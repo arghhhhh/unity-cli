@@ -103,17 +103,18 @@ namespace UnityCliBridge.Core
 
         private static bool ShouldSkipStartupForCurrentProcess()
         {
-            if (!Application.isBatchMode)
-            {
-                return false;
-            }
-
             var commandLine = Environment.CommandLine ?? string.Empty;
-            if (commandLine.IndexOf("AssetImportWorker", StringComparison.OrdinalIgnoreCase) >= 0 ||
+            bool isBatchOrWorker =
+                Application.isBatchMode ||
+                commandLine.IndexOf("AssetImportWorker", StringComparison.OrdinalIgnoreCase) >= 0 ||
                 commandLine.IndexOf("-adb2", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                commandLine.IndexOf("-batchMode", StringComparison.OrdinalIgnoreCase) >= 0)
+                commandLine.IndexOf("-batchMode", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                commandLine.IndexOf("-batchmode", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                commandLine.IndexOf("-runTests", StringComparison.OrdinalIgnoreCase) >= 0;
+
+            if (isBatchOrWorker)
             {
-                BridgeLogger.Log("Skipping TCP listener startup in AssetImportWorker/batch process.");
+                BridgeLogger.Log("Skipping TCP listener startup in AssetImportWorker/batch/test process.");
                 return true;
             }
 
@@ -159,6 +160,12 @@ namespace UnityCliBridge.Core
         /// </summary>
         private static void StartTcpListener()
         {
+            if (ShouldSkipStartupForCurrentProcess())
+            {
+                Status = BridgeStatus.NotConfigured;
+                return;
+            }
+
             try
             {
                 if (tcpListener != null)
@@ -931,9 +938,25 @@ namespace UnityCliBridge.Core
                         response = Response.SuccessResult(command.Id, addressablesAnalyzeResult);
                         break;
                     // Project Settings commands
+                    case "get_project_setting":
+                        var getProjectSettingResult = ProjectSettingsHandler.GetProjectSetting(command.Parameters);
+                        response = Response.SuccessResult(command.Id, getProjectSettingResult);
+                        break;
+                    case "set_project_setting":
+                        var setProjectSettingResult = ProjectSettingsHandler.SetProjectSetting(command.Parameters);
+                        response = Response.SuccessResult(command.Id, setProjectSettingResult);
+                        break;
                     case "get_project_settings":
                         var getSettingsResult = ProjectSettingsHandler.GetProjectSettings(command.Parameters);
                         response = Response.SuccessResult(command.Id, getSettingsResult);
+                        break;
+                    case "get_package_setting":
+                        var getPackageSettingResult = PackageSettingsHandler.GetPackageSetting(command.Parameters);
+                        response = Response.SuccessResult(command.Id, getPackageSettingResult);
+                        break;
+                    case "set_package_setting":
+                        var setPackageSettingResult = PackageSettingsHandler.SetPackageSetting(command.Parameters);
+                        response = Response.SuccessResult(command.Id, setPackageSettingResult);
                         break;
                     // Editor/Project info for Node-side tools
                     case "get_editor_info":

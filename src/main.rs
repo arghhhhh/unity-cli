@@ -11,12 +11,11 @@ mod tool_catalog;
 mod transport;
 mod unityd;
 
-use std::fs;
-use std::path::PathBuf;
-
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use serde_json::{json, Value};
+use std::fs;
+use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
 
 use crate::cli::{
@@ -234,16 +233,19 @@ async fn execute_tool(cli: &Cli, tool_name: &str, params: Value) -> Result<Value
     }
 
     let config = RuntimeConfig::from_cli(cli)?;
+    call_remote_tool(&config, tool_name, params).await
+}
 
+async fn call_remote_tool(config: &RuntimeConfig, tool_name: &str, params: Value) -> Result<Value> {
     // Try daemon first (fast path).
-    match unityd::try_call_tool(tool_name, &params, &config).await {
+    match unityd::try_call_tool(tool_name, &params, config).await {
         Ok(value) => return Ok(value),
         Err(error) if error.is_transport() => {}
         Err(error) => return Err(error.into()),
     }
 
     // Direct TCP fallback
-    let mut client = UnityClient::connect(&config).await.with_context(|| {
+    let mut client = UnityClient::connect(config).await.with_context(|| {
         format!(
             "Failed to connect to Unity at {}:{}",
             config.host, config.port
@@ -810,6 +812,37 @@ mod tests {
             }),
         )
         .expect("build_index outputPath should pass");
+    }
+
+    #[test]
+    fn validate_tool_params_accepts_write_csharp_file_payload() {
+        validate_tool_params(
+            "write_csharp_file",
+            &json!({
+                "relative": "Assets/Scripts/Player.cs",
+                "newText": "public class Player {}",
+                "apply": true,
+                "validate": true,
+                "refresh": true,
+                "waitForCompile": true,
+                "updateIndex": true
+            }),
+        )
+        .expect("write_csharp_file payload should pass");
+    }
+
+    #[test]
+    fn validate_tool_params_rejects_create_package_setting_without_value() {
+        let err = validate_tool_params(
+            "set_package_setting",
+            &json!({
+                "package": "com.example.demo",
+                "key": "coverage/enabled",
+                "confirmChanges": true
+            }),
+        )
+        .expect_err("missing value should fail");
+        assert!(format!("{err:#}").contains("$.value is required"));
     }
 
     #[test]

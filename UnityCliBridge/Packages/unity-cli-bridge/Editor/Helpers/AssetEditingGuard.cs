@@ -57,6 +57,10 @@ namespace UnityCliBridge.Helpers
         private static void TryStop()
         {
             // Best-effort: Stop only if sentinel was set or depth suggests active
+            if (_depth <= 0 && !EditorPrefs.GetBool(SentinelKey, false))
+            {
+                return;
+            }
             try { AssetDatabase.StopAssetEditing(); } catch { }
             EditorPrefs.SetBool(SentinelKey, false);
             _depth = 0;

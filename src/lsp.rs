@@ -57,6 +57,9 @@ pub fn maybe_execute(
             | "insert_after_symbol"
             | "remove_symbol"
             | "validate_text_edits"
+            | "write_csharp_file"
+            | "create_csharp_file"
+            | "apply_csharp_edits"
     ) {
         return None;
     }
@@ -154,6 +157,13 @@ fn execute_once(tool_name: &str, params: &Value, project_root: &Path) -> Result<
         "validate_text_edits" => {
             handle_validate_text_edits(&mut cached.session, &canonical_root, params)
         }
+        "write_csharp_file" => {
+            handle_write_csharp_file(&mut cached.session, &canonical_root, params)
+        }
+        "create_csharp_file" => {
+            handle_create_csharp_file(&mut cached.session, &canonical_root, params)
+        }
+        "apply_csharp_edits" => handle_apply_csharp_edits(&mut cached.session, params),
         _ => Err(anyhow!("Unsupported LSP tool: {tool_name}")),
     }
 }
@@ -269,8 +279,13 @@ fn handle_find_symbol(
             continue;
         }
 
-        let kind_number = item.get("kind").and_then(Value::as_i64).unwrap_or(0);
-        let kind = kind_from_lsp(kind_number);
+        let kind = item
+            .get("kindName")
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| {
+                let kind_number = item.get("kind").and_then(Value::as_i64).unwrap_or(0);
+                kind_from_lsp(kind_number)
+            });
         if let Some(expected_kind) = &kind_filter {
             if kind != expected_kind {
                 continue;
@@ -305,7 +320,12 @@ fn handle_find_symbol(
             "name": symbol_name,
             "kind": kind,
             "line": line,
-            "column": column
+            "column": column,
+            "namePath": item
+                .get("namePath")
+                .and_then(Value::as_str)
+                .map(normalize_name_path),
+            "container": item.get("containerName").and_then(Value::as_str)
         }));
         total += 1;
     }
@@ -510,8 +530,18 @@ fn require_name_path(params: &Value, tool_name: &str) -> Result<String> {
     params
         .get("namePath")
         .and_then(Value::as_str)
-        .map(String::from)
+        .map(normalize_name_path)
         .ok_or_else(|| anyhow!("{tool_name} requires `namePath`"))
+}
+
+fn normalize_name_path(raw: &str) -> String {
+    raw.trim()
+        .replace('.', "/")
+        .split('/')
+        .filter(|segment| !segment.trim().is_empty())
+        .map(str::trim)
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 fn get_apply(params: &Value) -> bool {
@@ -549,7 +579,7 @@ fn handle_rename_symbol(
         }),
     )?;
 
-    Ok(wrap_lsp_write_result(result))
+    normalize_lsp_write_result("rename_symbol", params, result)
 }
 
 fn handle_replace_symbol_body(
@@ -580,7 +610,7 @@ fn handle_replace_symbol_body(
         }),
     )?;
 
-    Ok(wrap_lsp_write_result(result))
+    normalize_lsp_write_result("replace_symbol_body", params, result)
 }
 
 fn handle_insert_symbol(
@@ -623,7 +653,7 @@ fn handle_insert_symbol(
         }),
     )?;
 
-    Ok(wrap_lsp_write_result(result))
+    normalize_lsp_write_result(tool_name, params, result)
 }
 
 fn handle_remove_symbol(
@@ -655,7 +685,121 @@ fn handle_remove_symbol(
 
     let result = session.request("unitycli/removeSymbol", request)?;
 
-    Ok(wrap_lsp_write_result(result))
+    normalize_lsp_write_result("remove_symbol", params, result)
+}
+
+fn handle_write_csharp_file(
+    session: &mut LspSession,
+    _project_root: &Path,
+    params: &Value,
+) -> Result<Value> {
+    let rel = require_relative_path(params, "write_csharp_file")?;
+    let new_text = params
+        .get("newText")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("write_csharp_file requires `newText`"))?;
+    let validate = params
+        .get("validate")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let apply = params.get("apply").and_then(Value::as_bool).unwrap_or(true);
+    let format = params
+        .get("format")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let result = session.request(
+        "unitycli/writeCSharpFile",
+        json!({
+            "relative": rel,
+            "newText": new_text,
+            "validate": validate,
+            "apply": apply,
+            "format": format
+        }),
+    )?;
+
+    normalize_lsp_write_result("write_csharp_file", params, result)
+}
+
+fn handle_create_csharp_file(
+    session: &mut LspSession,
+    _project_root: &Path,
+    params: &Value,
+) -> Result<Value> {
+    let rel = require_relative_path(params, "create_csharp_file")?;
+    let text = params
+        .get("text")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("create_csharp_file requires `text`"))?;
+    let overwrite = params
+        .get("overwrite")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let validate = params
+        .get("validate")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let apply = params.get("apply").and_then(Value::as_bool).unwrap_or(true);
+
+    let result = session.request(
+        "unitycli/createCSharpFile",
+        json!({
+            "relative": rel,
+            "text": text,
+            "overwrite": overwrite,
+            "validate": validate,
+            "apply": apply
+        }),
+    )?;
+
+    normalize_lsp_write_result("create_csharp_file", params, result)
+}
+
+fn handle_apply_csharp_edits(session: &mut LspSession, params: &Value) -> Result<Value> {
+    let files = params
+        .get("files")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow!("apply_csharp_edits requires `files`"))?;
+    if files.is_empty() {
+        return Err(anyhow!("apply_csharp_edits requires at least one file"));
+    }
+
+    let normalized_files = files
+        .iter()
+        .map(|file| {
+            let rel = require_relative_path(file, "apply_csharp_edits")?;
+            let new_text = file
+                .get("newText")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("apply_csharp_edits file requires `newText`"))?;
+            Ok(json!({
+                "relative": rel,
+                "newText": new_text
+            }))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let validate = params
+        .get("validate")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let apply = params.get("apply").and_then(Value::as_bool).unwrap_or(true);
+    let format = params
+        .get("format")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let result = session.request(
+        "unitycli/applyCSharpEdits",
+        json!({
+            "files": normalized_files,
+            "validate": validate,
+            "apply": apply,
+            "format": format
+        }),
+    )?;
+
+    normalize_lsp_write_result("apply_csharp_edits", params, result)
 }
 
 fn build_remove_symbol_request(
@@ -712,15 +856,80 @@ fn handle_validate_text_edits(
     Ok(response)
 }
 
-fn wrap_lsp_write_result(result: Value) -> Value {
-    let mut response = result.clone();
-    if response.is_object() {
-        response
-            .as_object_mut()
-            .unwrap()
-            .insert("backend".to_string(), json!("lsp"));
+fn normalize_lsp_write_result(tool_name: &str, params: &Value, result: Value) -> Result<Value> {
+    let mut response = result
+        .as_object()
+        .cloned()
+        .ok_or_else(|| anyhow!("{tool_name} returned invalid LSP result"))?;
+
+    let success = response
+        .get("success")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let applied = response
+        .get("applied")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    if !response.contains_key("changedFiles") {
+        let fallback = params
+            .get("relative")
+            .or_else(|| params.get("path"))
+            .and_then(Value::as_str)
+            .and_then(normalize_rel_path)
+            .map(|path| vec![Value::String(path)])
+            .unwrap_or_default();
+        response.insert("changedFiles".to_string(), Value::Array(fallback));
     }
-    response
+
+    if !response.contains_key("changedSymbols") {
+        let fallback = params
+            .get("namePath")
+            .and_then(Value::as_str)
+            .map(normalize_name_path)
+            .map(|path| vec![Value::String(path)])
+            .unwrap_or_default();
+        response.insert("changedSymbols".to_string(), Value::Array(fallback));
+    }
+
+    if !response.contains_key("diagnostics") {
+        response.insert("diagnostics".to_string(), json!([]));
+    }
+
+    if !response.contains_key("diffPreview") {
+        let preview_entries = response
+            .remove("preview")
+            .map(|preview| {
+                let path = params
+                    .get("relative")
+                    .or_else(|| params.get("path"))
+                    .and_then(Value::as_str)
+                    .and_then(normalize_rel_path)
+                    .unwrap_or_else(|| "<multiple>".to_string());
+                json!([{ "path": path, "preview": preview }])
+            })
+            .unwrap_or_else(|| json!([]));
+        response.insert("diffPreview".to_string(), preview_entries);
+    }
+
+    let reason = response
+        .remove("reason")
+        .or_else(|| response.remove("error"))
+        .unwrap_or_else(|| {
+            if success && applied {
+                json!("applied")
+            } else if success {
+                json!("preview")
+            } else {
+                json!("failed")
+            }
+        });
+    response.insert("reason".to_string(), reason);
+    response.insert("success".to_string(), Value::Bool(success));
+    response.insert("applied".to_string(), Value::Bool(applied));
+    response.insert("backend".to_string(), json!("lsp"));
+
+    Ok(Value::Object(response))
 }
 
 fn collect_document_symbols(value: &Value, container: Option<&str>, out: &mut Vec<Value>) {
@@ -736,7 +945,14 @@ fn collect_document_symbols(value: &Value, container: Option<&str>, out: &mut Ve
             continue;
         }
 
-        let kind_number = item.get("kind").and_then(Value::as_i64).unwrap_or(0);
+        let kind = item
+            .get("kindName")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                let kind_number = item.get("kind").and_then(Value::as_i64).unwrap_or(0);
+                kind_from_lsp(kind_number).to_string()
+            });
         let line = item
             .pointer("/range/start/line")
             .and_then(Value::as_u64)
@@ -750,23 +966,48 @@ fn collect_document_symbols(value: &Value, container: Option<&str>, out: &mut Ve
 
         let mut symbol = serde_json::Map::new();
         symbol.insert("name".to_string(), Value::String(name.to_string()));
-        symbol.insert(
-            "kind".to_string(),
-            Value::String(kind_from_lsp(kind_number).to_string()),
-        );
+        symbol.insert("kind".to_string(), Value::String(kind));
         symbol.insert("line".to_string(), Value::Number(line.into()));
         symbol.insert("column".to_string(), Value::Number(column.into()));
-        if let Some(parent_name) = container {
+        let parent_name = item.get("container").and_then(Value::as_str).or(container);
+        if let Some(parent_name) = parent_name {
             symbol.insert(
                 "container".to_string(),
                 Value::String(parent_name.to_string()),
             );
         }
+        if let Some(name_path) = item.get("namePath").and_then(Value::as_str) {
+            symbol.insert(
+                "namePath".to_string(),
+                Value::String(normalize_name_path(name_path)),
+            );
+        }
+        if let Some(container_path) = item.get("containerPath").and_then(Value::as_str) {
+            symbol.insert(
+                "containerPath".to_string(),
+                Value::String(normalize_name_path(container_path)),
+            );
+        }
+        if !symbol.contains_key("namePath") {
+            let fallback_name_path = item
+                .get("containerPath")
+                .and_then(Value::as_str)
+                .map(normalize_name_path)
+                .or_else(|| {
+                    item.get("container")
+                        .and_then(Value::as_str)
+                        .map(normalize_name_path)
+                })
+                .or_else(|| container.map(normalize_name_path))
+                .map(|prefix| format!("{prefix}/{name}"))
+                .unwrap_or_else(|| name.to_string());
+            symbol.insert("namePath".to_string(), Value::String(fallback_name_path));
+        }
         out.push(Value::Object(symbol));
 
         collect_document_symbols(
             item.get("children").unwrap_or(&Value::Null),
-            Some(name),
+            Some(parent_name.unwrap_or(name)),
             out,
         );
     }
@@ -779,6 +1020,7 @@ fn kind_from_lsp(kind: i64) -> &'static str {
         6 => "method",
         7 => "property",
         8 => "field",
+        9 => "constructor",
         10 => "enum",
         11 => "interface",
         23 => "struct",
@@ -1045,7 +1287,14 @@ impl LspSession {
                 return Err(anyhow!("LSP error ({code}): {text}"));
             }
 
-            return Ok(message.get("result").cloned().unwrap_or(Value::Null));
+            let result = message
+                .get("result")
+                .cloned()
+                .ok_or_else(|| anyhow!("LSP response missing `result`"))?;
+            if result.is_null() {
+                return Err(anyhow!("LSP response contained null `result`"));
+            }
+            return Ok(result);
         }
     }
 }
@@ -1159,9 +1408,10 @@ mod tests {
 
     use super::{
         build_remove_symbol_request, collect_document_symbols, execute_direct, file_uri, get_apply,
-        id_matches, is_retryable_session_error, kind_from_lsp, maybe_execute, normalize_rel_path,
-        path_matches_scope, read_message, ref_path, require_name_path, require_relative_path,
-        reset_cached_session, to_project_relative_or_raw, uri_to_rel_path, wrap_lsp_write_result,
+        id_matches, is_retryable_session_error, kind_from_lsp, maybe_execute,
+        normalize_lsp_write_result, normalize_rel_path, path_matches_scope, read_message, ref_path,
+        require_name_path, require_relative_path, reset_cached_session, to_project_relative_or_raw,
+        uri_to_rel_path,
     };
 
     #[cfg(unix)]
@@ -1250,12 +1500,12 @@ while True:
     elif method == "initialized":
         continue
     elif method == "textDocument/documentSymbol":
-        send_message({"jsonrpc":"2.0","id":message_id,"result":[{"name":"Player","kind":5,"range":{"start":{"line":0,"character":0}},"children":[{"name":"Move","kind":6,"range":{"start":{"line":2,"character":4}}}]}]})
+        send_message({"jsonrpc":"2.0","id":message_id,"result":[{"name":"Player","kind":5,"namePath":"Player","range":{"start":{"line":0,"character":0}},"children":[{"name":"Move","kind":6,"namePath":"Player/Move","container":"Player","containerPath":"Player","range":{"start":{"line":2,"character":4}}}]}]})
     elif method == "workspace/symbol":
         send_message({"jsonrpc":"2.0","id":message_id,"result":[
-            {"name":"Player","kind":5,"location":{"uri":PLAYER_URI,"range":{"start":{"line":0,"character":0}}}},
-            {"name":"PlayerFactory","kind":5,"location":{"uri":PLAYER_URI,"range":{"start":{"line":5,"character":1}}}},
-            {"name":"Move","kind":6,"location":{"uri":PLAYER_URI,"range":{"start":{"line":2,"character":4}}}}
+            {"name":"Player","kind":5,"namePath":"Player","location":{"uri":PLAYER_URI,"range":{"start":{"line":0,"character":0}}}},
+            {"name":"PlayerFactory","kind":5,"namePath":"PlayerFactory","location":{"uri":PLAYER_URI,"range":{"start":{"line":5,"character":1}}}},
+            {"name":"Move","kind":6,"namePath":"Player/Move","containerName":"Player","location":{"uri":PLAYER_URI,"range":{"start":{"line":2,"character":4}}}}
         ]})
     elif method == "unitycli/referencesByName":
         send_message({"jsonrpc":"2.0","id":message_id,"result":[
@@ -1266,8 +1516,14 @@ while True:
         send_message({"jsonrpc":"2.0","id":message_id,"result":{"success":True,"count":3,"outputPath":OUTPUT_PATH}})
     elif method == "unitycli/validateTextEdits":
         send_message({"jsonrpc":"2.0","id":message_id,"result":{"diagnostics":[{"severity":"warning","message":"sample"}]}})
-    elif method in ("unitycli/renameByNamePath","unitycli/replaceSymbolBody","unitycli/insertBeforeSymbol","unitycli/insertAfterSymbol","unitycli/removeSymbol"):
-        send_message({"jsonrpc":"2.0","id":message_id,"result":{"success":True,"applied":True}})
+    elif method in ("unitycli/renameByNamePath","unitycli/replaceSymbolBody","unitycli/insertBeforeSymbol","unitycli/insertAfterSymbol","unitycli/removeSymbol","unitycli/writeCSharpFile","unitycli/createCSharpFile","unitycli/applyCSharpEdits"):
+        params = message.get("params", {})
+        changed_files = ["Assets/Scripts/Player.cs"]
+        if "relative" in params:
+            changed_files = [params["relative"]]
+        elif "files" in params and params["files"]:
+            changed_files = [item.get("relative") for item in params["files"] if item.get("relative")]
+        send_message({"jsonrpc":"2.0","id":message_id,"result":{"success":True,"applied":True,"changedFiles":changed_files,"changedSymbols":["Player/Move"],"diagnostics":[],"diffPreview":[],"reason":None}})
     else:
         send_message({"jsonrpc":"2.0","id":message_id,"result":{}})
 "#;
@@ -1438,10 +1694,19 @@ while True:
     }
 
     #[test]
-    fn wrap_lsp_write_result_adds_backend_to_objects_only() {
-        let wrapped = wrap_lsp_write_result(json!({ "success": true }));
+    fn normalize_lsp_write_result_adds_contract_fields() {
+        let wrapped = normalize_lsp_write_result(
+            "rename_symbol",
+            &json!({
+                "relative": "Assets/Scripts/Player.cs",
+                "namePath": "Player/Move"
+            }),
+            json!({ "success": true, "applied": true }),
+        )
+        .expect("result should normalize");
         assert_eq!(wrapped["backend"], "lsp");
-        assert_eq!(wrap_lsp_write_result(json!(["x"])), json!(["x"]));
+        assert_eq!(wrapped["changedFiles"], json!(["Assets/Scripts/Player.cs"]));
+        assert_eq!(wrapped["changedSymbols"], json!(["Player/Move"]));
     }
 
     #[test]
@@ -1467,6 +1732,7 @@ while True:
         assert_eq!(symbols[0]["name"], "Player");
         assert_eq!(symbols[1]["container"], "Player");
         assert_eq!(symbols[1]["kind"], "method");
+        assert_eq!(symbols[1]["namePath"], "Player/Move");
     }
 
     #[test]
@@ -1582,7 +1848,7 @@ while True:
             .as_array()
             .expect("symbols should be an array")
             .iter()
-            .any(|symbol| symbol["name"] == "Move"));
+            .any(|symbol| symbol["name"] == "Move" && symbol["namePath"] == "Player/Move"));
 
         let find_symbol = execute_direct(
             "find_symbol",
@@ -1680,12 +1946,46 @@ while True:
         let remove = execute_direct("remove_symbol", &params, project_dir.path())
             .expect("remove_symbol should succeed");
         assert_eq!(remove["backend"], "lsp");
+        assert_eq!(remove["changedSymbols"], json!(["Player/Move"]));
 
         let validate = execute_direct("validate_text_edits", &params, project_dir.path())
             .expect("validate_text_edits should succeed");
         assert_eq!(validate["backend"], "lsp");
         assert_eq!(validate["success"], true);
         assert!(validate["diagnostics"].is_array());
+
+        let write = execute_direct("write_csharp_file", &params, project_dir.path())
+            .expect("write_csharp_file should succeed");
+        assert_eq!(write["backend"], "lsp");
+        assert_eq!(write["success"], true);
+
+        let create = execute_direct(
+            "create_csharp_file",
+            &json!({
+                "relative":"Assets/Scripts/Created.cs",
+                "text":"public class Created {}",
+                "apply": true
+            }),
+            project_dir.path(),
+        )
+        .expect("create_csharp_file should succeed");
+        assert_eq!(create["backend"], "lsp");
+        assert_eq!(create["changedFiles"], json!(["Assets/Scripts/Created.cs"]));
+
+        let apply_many = execute_direct(
+            "apply_csharp_edits",
+            &json!({
+                "files": [{
+                    "relative":"Assets/Scripts/Player.cs",
+                    "newText":"public class Player {}"
+                }],
+                "apply": true
+            }),
+            project_dir.path(),
+        )
+        .expect("apply_csharp_edits should succeed");
+        assert_eq!(apply_many["backend"], "lsp");
+        assert_eq!(apply_many["success"], true);
 
         reset_cached_session();
     }

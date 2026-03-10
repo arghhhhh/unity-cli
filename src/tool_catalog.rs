@@ -94,8 +94,15 @@ pub const TOOL_NAMES: &[&str] = &[
     "insert_after_symbol",
     "remove_symbol",
     "validate_text_edits",
+    "write_csharp_file",
+    "create_csharp_file",
+    "apply_csharp_edits",
     "create_class",
+    "get_project_setting",
+    "set_project_setting",
     "get_project_settings",
+    "get_package_setting",
+    "set_package_setting",
     "update_project_settings",
     "get_command_stats",
     "ping",
@@ -196,6 +203,9 @@ fn tool_executor(name: &str) -> ToolExecutor {
         | "insert_after_symbol"
         | "remove_symbol"
         | "validate_text_edits"
+        | "write_csharp_file"
+        | "create_csharp_file"
+        | "apply_csharp_edits"
         | "create_class" => ToolExecutor::Local,
         _ => ToolExecutor::Remote,
     }
@@ -235,6 +245,8 @@ fn is_read_only_tool(name: &str) -> bool {
             | "search"
             | "find_symbol"
             | "get_symbols"
+            | "get_project_setting"
+            | "get_package_setting"
             | "get_project_settings"
             | "get_command_stats"
             | "ping"
@@ -478,6 +490,61 @@ fn tool_params_schema(name: &str) -> Value {
                 ("newText", string_schema()),
             ],
             &["newText"],
+            false,
+        ),
+        "write_csharp_file" => object_schema(
+            &[
+                ("relative", string_schema()),
+                ("path", string_schema()),
+                ("newText", string_schema()),
+                ("validate", boolean_schema()),
+                ("apply", boolean_schema()),
+                ("format", boolean_schema()),
+                ("refresh", boolean_schema()),
+                ("waitForCompile", boolean_schema()),
+                ("updateIndex", boolean_schema()),
+            ],
+            &["newText"],
+            false,
+        ),
+        "create_csharp_file" => object_schema(
+            &[
+                ("relative", string_schema()),
+                ("path", string_schema()),
+                ("text", string_schema()),
+                ("overwrite", boolean_schema()),
+                ("validate", boolean_schema()),
+                ("apply", boolean_schema()),
+                ("format", boolean_schema()),
+                ("refresh", boolean_schema()),
+                ("waitForCompile", boolean_schema()),
+                ("updateIndex", boolean_schema()),
+            ],
+            &["text"],
+            false,
+        ),
+        "apply_csharp_edits" => object_schema(
+            &[
+                (
+                    "files",
+                    array_of(object_schema(
+                        &[
+                            ("relative", string_schema()),
+                            ("path", string_schema()),
+                            ("newText", string_schema()),
+                        ],
+                        &["newText"],
+                        false,
+                    )),
+                ),
+                ("validate", boolean_schema()),
+                ("apply", boolean_schema()),
+                ("format", boolean_schema()),
+                ("refresh", boolean_schema()),
+                ("waitForCompile", boolean_schema()),
+                ("updateIndex", boolean_schema()),
+            ],
+            &["files"],
             false,
         ),
         "create_class" => object_schema(
@@ -867,6 +934,16 @@ fn tool_params_schema(name: &str) -> Value {
         ),
         "clear_logs" | "refresh_assets" | "quit_editor" | "get_editor_info"
         | "get_editor_state" | "get_command_stats" => object_schema(&[], &[], false),
+        "get_project_setting" => object_schema(&[("path", string_schema())], &["path"], false),
+        "set_project_setting" => object_schema(
+            &[
+                ("path", string_schema()),
+                ("value", any_schema()),
+                ("confirmChanges", boolean_schema()),
+            ],
+            &["path", "value", "confirmChanges"],
+            false,
+        ),
         "get_project_settings" => object_schema(
             &[
                 ("includePlayer", boolean_schema()),
@@ -882,6 +959,26 @@ fn tool_params_schema(name: &str) -> Value {
                 ("includeTags", boolean_schema()),
             ],
             &[],
+            false,
+        ),
+        "get_package_setting" => object_schema(
+            &[
+                ("package", string_schema()),
+                ("key", string_schema()),
+                ("scope", enum_string_schema(&["project", "user"])),
+            ],
+            &["package", "key"],
+            false,
+        ),
+        "set_package_setting" => object_schema(
+            &[
+                ("package", string_schema()),
+                ("key", string_schema()),
+                ("value", any_schema()),
+                ("scope", enum_string_schema(&["project", "user"])),
+                ("confirmChanges", boolean_schema()),
+            ],
+            &["package", "key", "value", "confirmChanges"],
             false,
         ),
         "update_project_settings" => object_schema(
@@ -2096,7 +2193,7 @@ mod tests {
 
     #[test]
     fn tool_catalog_keeps_manifest_parity_count() {
-        assert_eq!(TOOL_NAMES.len(), 108);
+        assert_eq!(TOOL_NAMES.len(), 115);
     }
 
     #[test]
@@ -2149,6 +2246,19 @@ mod tests {
             spec.params_schema["required"],
             json!(["namePath", "newName"])
         );
+    }
+
+    #[test]
+    fn csharp_file_write_schemas_are_local_and_strict() {
+        for name in [
+            "write_csharp_file",
+            "create_csharp_file",
+            "apply_csharp_edits",
+        ] {
+            let spec = get_tool_spec(name).expect("csharp edit tool must exist");
+            assert_eq!(spec.executor, ToolExecutor::Local);
+            assert_eq!(spec.params_schema["additionalProperties"], false);
+        }
     }
 
     #[test]

@@ -3,13 +3,18 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context, Result};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use walkdir::{DirEntry, WalkDir};
+
+use crate::config::RuntimeConfig;
+use crate::transport::UnityClient;
+use crate::unityd;
 
 const INDEX_REL_PATH: &str = ".unity/cache/unity-cli/symbol-index.json";
 const INDEX_VERSION: u32 = 1;
@@ -22,6 +27,8 @@ struct SymbolEntry {
     kind: String,
     line: usize,
     column: usize,
+    #[serde(rename = "namePath", default)]
+    name_path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     container: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -73,6 +80,9 @@ pub fn maybe_execute_local_tool(tool_name: &str, params: &Value) -> Option<Resul
         "insert_after_symbol" => Some(local_lsp_write("insert_after_symbol", params)),
         "remove_symbol" => Some(local_lsp_write("remove_symbol", params)),
         "validate_text_edits" => Some(local_lsp_write("validate_text_edits", params)),
+        "write_csharp_file" => Some(local_lsp_write("write_csharp_file", params)),
+        "create_csharp_file" => Some(local_lsp_write("create_csharp_file", params)),
+        "apply_csharp_edits" => Some(local_lsp_write("apply_csharp_edits", params)),
         "create_class" => Some(local_create_class(params)),
         _ => None,
     }
@@ -660,21 +670,184 @@ fn local_find_refs(params: &Value) -> Result<Value> {
 
 fn local_lsp_write(tool_name: &str, params: &Value) -> Result<Value> {
     let root = project_root()?;
-    if let Some(result) = crate::lsp::maybe_execute(tool_name, params, &root) {
-        return result;
+    let result = if let Some(result) = crate::lsp::maybe_execute(tool_name, params, &root) {
+        result?
+    } else {
+        let mode = env::var("UNITY_CLI_LSP_MODE")
+            .ok()
+            .map(|value| value.to_ascii_lowercase());
+        if matches!(mode.as_deref(), Some("off")) {
+            return Err(anyhow!(
+                "{tool_name} requires LSP; set UNITY_CLI_LSP_MODE=auto or required"
+            ));
+        }
+
+        crate::lsp::execute_direct(tool_name, params, &root)?
+    };
+
+    if tool_name == "validate_text_edits" {
+        return Ok(result);
     }
 
-    let mode = env::var("UNITY_CLI_LSP_MODE")
+    run_csharp_post_write_pipeline(result, params)
+}
+
+fn run_csharp_post_write_pipeline(mut result: Value, params: &Value) -> Result<Value> {
+    let success = result
+        .get("success")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let applied = result
+        .get("applied")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !(success && applied) {
+        return Ok(result);
+    }
+
+    let wait_for_compile = params
+        .get("waitForCompile")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let refresh = params
+        .get("refresh")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        || wait_for_compile;
+    let update_index = params
+        .get("updateIndex")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    if update_index {
+        let changed_files = changed_files_from_result(&result);
+        if !changed_files.is_empty() {
+            let update_result = local_update_index(&json!({ "paths": changed_files }))?;
+            result["indexUpdate"] = update_result;
+            if !result["indexUpdate"]["success"].as_bool().unwrap_or(false) {
+                mark_post_write_failure(&mut result, "index_update_failed");
+            }
+        }
+    }
+
+    if refresh {
+        match call_remote_tool_sync("refresh_assets", json!({})) {
+            Ok(refresh_result) => {
+                result["refresh"] = refresh_result;
+            }
+            Err(_) => {
+                mark_post_write_failure(&mut result, "refresh_failed");
+                return Ok(result);
+            }
+        }
+    }
+
+    if wait_for_compile {
+        match wait_for_compile_state() {
+            Ok(compile_result) => {
+                if let Some(messages) = compile_result.get("messages").and_then(Value::as_array) {
+                    if !result["diagnostics"].is_array() {
+                        result["diagnostics"] = json!([]);
+                    }
+                    let diagnostics = result["diagnostics"].as_array_mut().unwrap();
+                    diagnostics.extend(messages.iter().cloned());
+                }
+                result["compileState"] = compile_result;
+            }
+            Err(_) => {
+                mark_post_write_failure(&mut result, "compile_wait_failed");
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+fn mark_post_write_failure(result: &mut Value, reason: &str) {
+    result["success"] = Value::Bool(false);
+    result["reason"] = Value::String(reason.to_string());
+}
+
+fn changed_files_from_result(result: &Value) -> Vec<String> {
+    result
+        .get("changedFiles")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect()
+}
+
+fn default_runtime_config() -> RuntimeConfig {
+    let host = env::var("UNITY_CLI_HOST")
         .ok()
-        .unwrap_or_else(|| "off".to_string())
-        .to_ascii_lowercase();
-    if mode == "auto" || mode == "required" {
-        return crate::lsp::execute_direct(tool_name, params, &root);
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "localhost".to_string());
+    let port = env::var("UNITY_CLI_PORT")
+        .ok()
+        .and_then(|value| value.trim().parse::<u16>().ok())
+        .filter(|port| *port > 0)
+        .unwrap_or(6400);
+    let timeout_ms = env::var("UNITY_CLI_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|timeout| *timeout > 0)
+        .unwrap_or(30_000);
+    RuntimeConfig {
+        host,
+        port,
+        timeout: Duration::from_millis(timeout_ms),
     }
+}
 
-    Err(anyhow!(
-        "{tool_name} requires LSP; set UNITY_CLI_LSP_MODE=auto or required"
-    ))
+fn call_remote_tool_sync(tool_name: &str, params: Value) -> Result<Value> {
+    let config = default_runtime_config();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("Failed to create tokio runtime for post-write pipeline")?;
+    runtime.block_on(async move {
+        match unityd::try_call_tool(tool_name, &params, &config).await {
+            Ok(value) => Ok(value),
+            Err(error) if error.is_transport() => {
+                let mut client = UnityClient::connect(&config).await.with_context(|| {
+                    format!(
+                        "Failed to connect to Unity at {}:{}",
+                        config.host, config.port
+                    )
+                })?;
+                client.call_tool(tool_name, params).await
+            }
+            Err(error) => Err(error.into()),
+        }
+    })
+}
+
+fn wait_for_compile_state() -> Result<Value> {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let state = call_remote_tool_sync(
+            "get_compilation_state",
+            json!({ "includeMessages": true, "maxMessages": 100 }),
+        )?;
+        let is_compiling = state
+            .get("isCompiling")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let is_updating = state
+            .get("isUpdating")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if !(is_compiling || is_updating) {
+            return Ok(state);
+        }
+        if Instant::now() >= deadline {
+            return Ok(state);
+        }
+        thread::sleep(Duration::from_millis(250));
+    }
 }
 
 fn requires_unityengine_using(inherits: Option<&str>) -> bool {
@@ -938,6 +1111,7 @@ fn extract_symbols_from_text(path: &str, text: &str) -> Vec<SymbolEntry> {
                 kind,
                 line: line_idx + 1,
                 column: symbol_column(line, &symbol_name),
+                name_path: build_name_path(&type_stack, &symbol_name),
                 container,
                 namespace: namespace.clone(),
             });
@@ -958,6 +1132,7 @@ fn extract_symbols_from_text(path: &str, text: &str) -> Vec<SymbolEntry> {
                     kind: "property".to_string(),
                     line: line_idx + 1,
                     column: symbol_column(line, &symbol_name),
+                    name_path: build_name_path(&type_stack, &symbol_name),
                     container: Some(container_name),
                     namespace: namespace.clone(),
                 });
@@ -970,6 +1145,7 @@ fn extract_symbols_from_text(path: &str, text: &str) -> Vec<SymbolEntry> {
                         kind: "method".to_string(),
                         line: line_idx + 1,
                         column: symbol_column(line, &symbol_name),
+                        name_path: build_name_path(&type_stack, &symbol_name),
                         container: Some(container_name),
                         namespace: namespace.clone(),
                     });
@@ -980,9 +1156,10 @@ fn extract_symbols_from_text(path: &str, text: &str) -> Vec<SymbolEntry> {
                     symbols.push(SymbolEntry {
                         path: path.to_string(),
                         name: symbol_name.clone(),
-                        kind: "method".to_string(),
+                        kind: "constructor".to_string(),
                         line: line_idx + 1,
                         column: symbol_column(line, &symbol_name),
+                        name_path: build_name_path(&type_stack, &symbol_name),
                         container: Some(container_name),
                         namespace: namespace.clone(),
                     });
@@ -995,6 +1172,7 @@ fn extract_symbols_from_text(path: &str, text: &str) -> Vec<SymbolEntry> {
                     kind: "field".to_string(),
                     line: line_idx + 1,
                     column: symbol_column(line, &symbol_name),
+                    name_path: build_name_path(&type_stack, &symbol_name),
                     container: Some(container_name),
                     namespace: namespace.clone(),
                 });
@@ -1073,6 +1251,15 @@ fn strip_csharp_comments(line: &str, in_block_comment: &mut bool) -> String {
 
 fn symbol_column(line: &str, name: &str) -> usize {
     line.find(name).map(|idx| idx + 1).unwrap_or(1)
+}
+
+fn build_name_path(type_stack: &[ScopedType], symbol_name: &str) -> String {
+    let mut segments = type_stack
+        .iter()
+        .map(|scope| scope.name.as_str())
+        .collect::<Vec<_>>();
+    segments.push(symbol_name);
+    segments.join("/")
 }
 
 fn is_control_keyword(name: &str) -> bool {
@@ -1213,6 +1400,10 @@ fn symbol_to_value(symbol: &SymbolEntry) -> Value {
     object.insert("kind".to_string(), Value::String(symbol.kind.clone()));
     object.insert("line".to_string(), Value::Number(symbol.line.into()));
     object.insert("column".to_string(), Value::Number(symbol.column.into()));
+    object.insert(
+        "namePath".to_string(),
+        Value::String(symbol.name_path.clone()),
+    );
     if let Some(container) = &symbol.container {
         object.insert("container".to_string(), Value::String(container.clone()));
     }
@@ -1376,6 +1567,9 @@ mod tests {
         assert!(symbols
             .iter()
             .any(|symbol| symbol["name"] == "Jump" && symbol["kind"] == "method"));
+        assert!(symbols
+            .iter()
+            .any(|symbol| symbol["name"] == "Jump" && symbol["namePath"] == "Player/Jump"));
 
         std::env::remove_var("UNITY_PROJECT_ROOT");
     }
@@ -1742,7 +1936,10 @@ namespace Demo.Game
             .any(|s| s.name == "Jump" && s.kind == "method"));
         assert!(symbols
             .iter()
-            .any(|s| s.name == "Player" && s.kind == "method"));
+            .any(|s| s.name == "Player" && s.kind == "constructor"));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "Jump" && s.name_path == "Player/Jump"));
         assert!(!symbols.iter().any(|s| s.name == "if"));
     }
 
@@ -1805,6 +2002,9 @@ namespace Demo.Game
             "insert_after_symbol",
             "remove_symbol",
             "validate_text_edits",
+            "write_csharp_file",
+            "create_csharp_file",
+            "apply_csharp_edits",
         ] {
             let result =
                 maybe_execute_local_tool(tool, &json!({})).expect("tool should be handled");
