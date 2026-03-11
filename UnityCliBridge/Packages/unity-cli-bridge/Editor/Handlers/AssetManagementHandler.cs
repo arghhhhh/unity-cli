@@ -5,6 +5,8 @@ using System.Linq;
 using UnityEngine;
 using UnityEditor;
 using UnityEditor.Animations;
+using UnityEditor.U2D;
+using UnityEngine.U2D;
 using UnityCliBridge.Logging;
 using Newtonsoft.Json.Linq;
 
@@ -620,6 +622,153 @@ namespace UnityCliBridge.Handlers
             }
         }
 
+        /// <summary>
+        /// Creates or overwrites an AnimationClip asset from sprite frames.
+        /// </summary>
+        public static object CreateAnimationClip(JObject parameters)
+        {
+            try
+            {
+                string clipPath = parameters["clipPath"]?.ToString();
+                bool overwrite = parameters["overwrite"]?.ToObject<bool>() ?? false;
+
+                var validationErrors = ValidateAnimationClipRequest(parameters, clipPath, overwrite);
+                if (validationErrors.Count > 0)
+                {
+                    return new
+                    {
+                        error = "AnimationClip request validation failed",
+                        validationErrors = validationErrors.ToArray()
+                    };
+                }
+
+                EnsureAssetDirectoryExists(clipPath);
+
+                AnimationClip clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(clipPath);
+                bool existed = clip != null;
+
+                if (clip == null)
+                {
+                    clip = new AnimationClip();
+                    AssetDatabase.CreateAsset(clip, clipPath);
+                }
+                else
+                {
+                    ResetAnimationClip(clip);
+                }
+
+                if (clip == null)
+                {
+                    return new { error = $"Failed to create AnimationClip at {clipPath}" };
+                }
+
+                float frameRate = parameters["frameRate"]?.ToObject<float>() ?? 12f;
+                bool loopTime = parameters["loopTime"]?.ToObject<bool>() ?? false;
+                string bindingPath = parameters["bindingPath"]?.ToString() ?? string.Empty;
+                JArray spritePaths = parameters["spritePaths"] as JArray ?? new JArray();
+
+                clip.frameRate = frameRate;
+
+                ObjectReferenceKeyframe[] keyframes = BuildSpriteKeyframes(spritePaths, frameRate);
+                var binding = new EditorCurveBinding
+                {
+                    path = bindingPath,
+                    type = typeof(SpriteRenderer),
+                    propertyName = "m_Sprite"
+                };
+
+                AnimationUtility.SetObjectReferenceCurve(clip, binding, keyframes);
+                SetAnimationClipLoopTime(clip, loopTime);
+
+                EditorUtility.SetDirty(clip);
+                AssetDatabase.SaveAssets();
+
+                return new
+                {
+                    success = true,
+                    clipPath = clipPath,
+                    guid = AssetDatabase.AssetPathToGUID(clipPath),
+                    frameRate = clip.frameRate,
+                    frameCount = keyframes.Length,
+                    loopTime = GetAnimationClipLoopTime(clip),
+                    bindingPath = bindingPath,
+                    message = existed ? "AnimationClip overwritten successfully" : "AnimationClip created successfully"
+                };
+            }
+            catch (Exception e)
+            {
+                BridgeLogger.LogError("AssetManagementHandler", $"Error in CreateAnimationClip: {e.Message}");
+                return new { error = $"Failed to create AnimationClip: {e.Message}" };
+            }
+        }
+
+        /// <summary>
+        /// Creates or overwrites a SpriteAtlas asset with packables and settings.
+        /// </summary>
+        public static object CreateSpriteAtlas(JObject parameters)
+        {
+            try
+            {
+                string atlasPath = parameters["atlasPath"]?.ToString();
+                bool overwrite = parameters["overwrite"]?.ToObject<bool>() ?? false;
+
+                var validationErrors = ValidateSpriteAtlasRequest(parameters, atlasPath, overwrite);
+                if (validationErrors.Count > 0)
+                {
+                    return new
+                    {
+                        error = "SpriteAtlas request validation failed",
+                        validationErrors = validationErrors.ToArray()
+                    };
+                }
+
+                EnsureAssetDirectoryExists(atlasPath);
+
+                SpriteAtlas atlas = AssetDatabase.LoadAssetAtPath<SpriteAtlas>(atlasPath);
+                bool existed = atlas != null;
+
+                if (atlas == null)
+                {
+                    atlas = new SpriteAtlas();
+                    AssetDatabase.CreateAsset(atlas, atlasPath);
+                }
+                else
+                {
+                    ResetSpriteAtlas(atlas);
+                }
+
+                if (atlas == null)
+                {
+                    return new { error = $"Failed to create SpriteAtlas at {atlasPath}" };
+                }
+
+                ApplySpriteAtlasSettings(atlas, parameters["packingSettings"] as JObject, parameters["textureSettings"] as JObject);
+
+                UnityEngine.Object[] packables = ResolveSpriteAtlasPackables(parameters["packables"] as JArray);
+                if (packables.Length > 0)
+                {
+                    SpriteAtlasExtensions.Add(atlas, packables);
+                }
+
+                EditorUtility.SetDirty(atlas);
+                AssetDatabase.SaveAssets();
+
+                return new
+                {
+                    success = true,
+                    atlasPath = atlasPath,
+                    guid = AssetDatabase.AssetPathToGUID(atlasPath),
+                    packableCount = packables.Length,
+                    message = existed ? "SpriteAtlas overwritten successfully" : "SpriteAtlas created successfully"
+                };
+            }
+            catch (Exception e)
+            {
+                BridgeLogger.LogError("AssetManagementHandler", $"Error in CreateSpriteAtlas: {e.Message}");
+                return new { error = $"Failed to create SpriteAtlas: {e.Message}" };
+            }
+        }
+
         #region Helper Methods
 
         private static List<string> ValidateAnimatorControllerRequest(JObject parameters, string controllerPath, bool overwrite)
@@ -1017,6 +1166,353 @@ namespace UnityCliBridge.Handlers
             }
 
             stateMachine.defaultState = null;
+        }
+
+        private static List<string> ValidateAnimationClipRequest(JObject parameters, string clipPath, bool overwrite)
+        {
+            var errors = new List<string>();
+
+            if (string.IsNullOrEmpty(clipPath))
+            {
+                errors.Add("clipPath is required");
+                return errors;
+            }
+
+            if (!clipPath.StartsWith("Assets/") || !clipPath.EndsWith(".anim"))
+            {
+                errors.Add("clipPath must start with Assets/ and end with .anim");
+            }
+
+            UnityEngine.Object existingAsset = AssetDatabase.LoadMainAssetAtPath(clipPath);
+            AnimationClip existingClip = AssetDatabase.LoadAssetAtPath<AnimationClip>(clipPath);
+            if (existingAsset != null && existingClip == null)
+            {
+                errors.Add($"Asset already exists at {clipPath} and is not an AnimationClip");
+            }
+            else if (existingClip != null && !overwrite)
+            {
+                errors.Add($"AnimationClip already exists at {clipPath}. Set overwrite to true to replace it.");
+            }
+
+            JArray spritePaths = ExpectArray(parameters["spritePaths"], "spritePaths", errors);
+            if (spritePaths == null || spritePaths.Count == 0)
+            {
+                errors.Add("spritePaths must contain at least one sprite reference");
+            }
+            else
+            {
+                for (int i = 0; i < spritePaths.Count; i++)
+                {
+                    if (spritePaths[i].Type != JTokenType.String)
+                    {
+                        errors.Add($"spritePaths[{i}] must be a string");
+                        continue;
+                    }
+
+                    string spriteReference = spritePaths[i].ToString();
+                    if (ResolveSpriteReference(spriteReference) == null)
+                    {
+                        errors.Add($"spritePaths[{i}] must resolve to an existing Sprite asset: {spriteReference}");
+                    }
+                }
+            }
+
+            ValidateNumericToken(parameters["frameRate"], "frameRate", errors);
+            if (parameters["frameRate"] != null && parameters["frameRate"].ToObject<float>() <= 0f)
+            {
+                errors.Add("frameRate must be greater than 0");
+            }
+
+            return errors;
+        }
+
+        private static void ResetAnimationClip(AnimationClip clip)
+        {
+            foreach (var binding in AnimationUtility.GetCurveBindings(clip))
+            {
+                AnimationUtility.SetEditorCurve(clip, binding, null);
+            }
+
+            foreach (var binding in AnimationUtility.GetObjectReferenceCurveBindings(clip))
+            {
+                AnimationUtility.SetObjectReferenceCurve(clip, binding, null);
+            }
+
+            clip.events = Array.Empty<AnimationEvent>();
+        }
+
+        private static ObjectReferenceKeyframe[] BuildSpriteKeyframes(JArray spritePaths, float frameRate)
+        {
+            var keyframes = new ObjectReferenceKeyframe[spritePaths.Count];
+            for (int i = 0; i < spritePaths.Count; i++)
+            {
+                keyframes[i] = new ObjectReferenceKeyframe
+                {
+                    time = i / frameRate,
+                    value = ResolveSpriteReference(spritePaths[i].ToString())
+                };
+            }
+
+            return keyframes;
+        }
+
+        private static Sprite ResolveSpriteReference(string spriteReference)
+        {
+            if (string.IsNullOrWhiteSpace(spriteReference))
+            {
+                return null;
+            }
+
+            string assetPath = spriteReference;
+            string spriteName = null;
+            int separatorIndex = spriteReference.IndexOf('#');
+            if (separatorIndex >= 0)
+            {
+                assetPath = spriteReference.Substring(0, separatorIndex);
+                spriteName = spriteReference.Substring(separatorIndex + 1);
+            }
+
+            if (!assetPath.StartsWith("Assets/"))
+            {
+                return null;
+            }
+
+            if (!string.IsNullOrEmpty(spriteName))
+            {
+                return AssetDatabase.LoadAllAssetsAtPath(assetPath)
+                    .OfType<Sprite>()
+                    .FirstOrDefault(sprite => sprite.name == spriteName);
+            }
+
+            Sprite spriteAsset = AssetDatabase.LoadAssetAtPath<Sprite>(assetPath);
+            if (spriteAsset != null)
+            {
+                return spriteAsset;
+            }
+
+            return AssetDatabase.LoadAllAssetsAtPath(assetPath).OfType<Sprite>().FirstOrDefault();
+        }
+
+        private static void SetAnimationClipLoopTime(AnimationClip clip, bool loopTime)
+        {
+            var serializedClip = new SerializedObject(clip);
+            var clipSettings = serializedClip.FindProperty("m_AnimationClipSettings");
+            if (clipSettings != null)
+            {
+                var loopTimeProperty = clipSettings.FindPropertyRelative("m_LoopTime");
+                if (loopTimeProperty != null)
+                {
+                    loopTimeProperty.boolValue = loopTime;
+                    serializedClip.ApplyModifiedPropertiesWithoutUndo();
+                }
+            }
+        }
+
+        private static bool GetAnimationClipLoopTime(AnimationClip clip)
+        {
+            var serializedClip = new SerializedObject(clip);
+            var clipSettings = serializedClip.FindProperty("m_AnimationClipSettings");
+            if (clipSettings == null)
+            {
+                return false;
+            }
+
+            var loopTimeProperty = clipSettings.FindPropertyRelative("m_LoopTime");
+            return loopTimeProperty != null && loopTimeProperty.boolValue;
+        }
+
+        private static List<string> ValidateSpriteAtlasRequest(JObject parameters, string atlasPath, bool overwrite)
+        {
+            var errors = new List<string>();
+
+            if (string.IsNullOrEmpty(atlasPath))
+            {
+                errors.Add("atlasPath is required");
+                return errors;
+            }
+
+            if (!atlasPath.StartsWith("Assets/") || !atlasPath.EndsWith(".spriteatlas"))
+            {
+                errors.Add("atlasPath must start with Assets/ and end with .spriteatlas");
+            }
+
+            UnityEngine.Object existingAsset = AssetDatabase.LoadMainAssetAtPath(atlasPath);
+            SpriteAtlas existingAtlas = AssetDatabase.LoadAssetAtPath<SpriteAtlas>(atlasPath);
+            if (existingAsset != null && existingAtlas == null)
+            {
+                errors.Add($"Asset already exists at {atlasPath} and is not a SpriteAtlas");
+            }
+            else if (existingAtlas != null && !overwrite)
+            {
+                errors.Add($"SpriteAtlas already exists at {atlasPath}. Set overwrite to true to replace it.");
+            }
+
+            JArray packables = ExpectArray(parameters["packables"], "packables", errors);
+            if (packables != null)
+            {
+                for (int i = 0; i < packables.Count; i++)
+                {
+                    if (packables[i].Type != JTokenType.String)
+                    {
+                        errors.Add($"packables[{i}] must be a string path");
+                        continue;
+                    }
+
+                    string packablePath = packables[i].ToString();
+                    if (!IsValidSpriteAtlasPackable(packablePath))
+                    {
+                        errors.Add($"packables[{i}] must point to an existing folder, Sprite, or Texture2D asset: {packablePath}");
+                    }
+                }
+            }
+
+            JObject packingSettings = ExpectObject(parameters["packingSettings"], "packingSettings", errors);
+            if (packingSettings != null)
+            {
+                ValidateIntegerToken(packingSettings["padding"], "packingSettings.padding", errors);
+                if (packingSettings["padding"] != null && packingSettings["padding"].ToObject<int>() < 0)
+                {
+                    errors.Add("packingSettings.padding must be >= 0");
+                }
+            }
+
+            JObject textureSettings = ExpectObject(parameters["textureSettings"], "textureSettings", errors);
+            if (textureSettings != null)
+            {
+                string filterMode = textureSettings["filterMode"]?.ToString();
+                if (!string.IsNullOrEmpty(filterMode) && !TryParseFilterMode(filterMode, out _))
+                {
+                    errors.Add("textureSettings.filterMode must be one of Point, Bilinear, Trilinear");
+                }
+            }
+
+            return errors;
+        }
+
+        private static JObject ExpectObject(JToken token, string fieldName, List<string> errors)
+        {
+            if (token == null)
+            {
+                return null;
+            }
+
+            JObject obj = token as JObject;
+            if (obj == null)
+            {
+                errors.Add($"{fieldName} must be an object");
+            }
+
+            return obj;
+        }
+
+        private static void ResetSpriteAtlas(SpriteAtlas atlas)
+        {
+            UnityEngine.Object[] existingPackables = SpriteAtlasExtensions.GetPackables(atlas);
+            if (existingPackables != null && existingPackables.Length > 0)
+            {
+                SpriteAtlasExtensions.Remove(atlas, existingPackables);
+            }
+        }
+
+        private static void ApplySpriteAtlasSettings(SpriteAtlas atlas, JObject packingSettingsToken, JObject textureSettingsToken)
+        {
+            SpriteAtlasPackingSettings packingSettings = SpriteAtlasExtensions.GetPackingSettings(atlas);
+            if (packingSettingsToken != null)
+            {
+                if (packingSettingsToken["padding"] != null)
+                {
+                    packingSettings.padding = packingSettingsToken["padding"].ToObject<int>();
+                }
+                if (packingSettingsToken["allowRotation"] != null)
+                {
+                    packingSettings.enableRotation = packingSettingsToken["allowRotation"].ToObject<bool>();
+                }
+                if (packingSettingsToken["tightPacking"] != null)
+                {
+                    packingSettings.enableTightPacking = packingSettingsToken["tightPacking"].ToObject<bool>();
+                }
+            }
+            SpriteAtlasExtensions.SetPackingSettings(atlas, packingSettings);
+
+            SpriteAtlasTextureSettings textureSettings = SpriteAtlasExtensions.GetTextureSettings(atlas);
+            if (textureSettingsToken != null)
+            {
+                if (textureSettingsToken["filterMode"] != null)
+                {
+                    textureSettings.filterMode = ParseFilterMode(textureSettingsToken["filterMode"].ToString());
+                }
+                if (textureSettingsToken["generateMipMaps"] != null)
+                {
+                    textureSettings.generateMipMaps = textureSettingsToken["generateMipMaps"].ToObject<bool>();
+                }
+            }
+            SpriteAtlasExtensions.SetTextureSettings(atlas, textureSettings);
+        }
+
+        private static UnityEngine.Object[] ResolveSpriteAtlasPackables(JArray packables)
+        {
+            if (packables == null || packables.Count == 0)
+            {
+                return Array.Empty<UnityEngine.Object>();
+            }
+
+            var resolved = new List<UnityEngine.Object>();
+            foreach (JToken token in packables)
+            {
+                string packablePath = token.ToString();
+                UnityEngine.Object packable = AssetDatabase.LoadMainAssetAtPath(packablePath);
+                if (packable == null && AssetDatabase.IsValidFolder(packablePath))
+                {
+                    packable = AssetDatabase.LoadAssetAtPath<DefaultAsset>(packablePath);
+                }
+                if (packable != null)
+                {
+                    resolved.Add(packable);
+                }
+            }
+
+            return resolved.ToArray();
+        }
+
+        private static bool IsValidSpriteAtlasPackable(string assetPath)
+        {
+            if (string.IsNullOrEmpty(assetPath) || !assetPath.StartsWith("Assets/"))
+            {
+                return false;
+            }
+
+            if (AssetDatabase.IsValidFolder(assetPath))
+            {
+                return true;
+            }
+
+            UnityEngine.Object asset = AssetDatabase.LoadMainAssetAtPath(assetPath);
+            return asset is Sprite || asset is Texture2D;
+        }
+
+        private static bool TryParseFilterMode(string filterMode, out FilterMode mode)
+        {
+            switch (filterMode)
+            {
+                case "Point":
+                    mode = FilterMode.Point;
+                    return true;
+                case "Bilinear":
+                    mode = FilterMode.Bilinear;
+                    return true;
+                case "Trilinear":
+                    mode = FilterMode.Trilinear;
+                    return true;
+                default:
+                    mode = FilterMode.Bilinear;
+                    return false;
+            }
+        }
+
+        private static FilterMode ParseFilterMode(string filterMode)
+        {
+            FilterMode mode;
+            return TryParseFilterMode(filterMode, out mode) ? mode : FilterMode.Bilinear;
         }
 
         private static bool ApplyMaterialProperty(Material material, string propertyName, JToken value)

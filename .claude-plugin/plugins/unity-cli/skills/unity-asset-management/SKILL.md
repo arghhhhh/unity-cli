@@ -1,6 +1,6 @@
 ---
 name: unity-asset-management
-description: Manage Unity assets and import metadata with unity-cli. Use when the user asks to refresh the Asset Database, inspect asset info, create or modify materials, update import settings, or analyze asset dependencies before moving or deleting files. Do not use for Addressables-specific workflows or scene object edits.
+description: Manage Unity assets and import metadata with unity-cli. Use when the user asks to refresh the Asset Database, inspect asset info, create or modify materials, create animation clips or sprite atlases, update import settings, or analyze asset dependencies before moving or deleting files. Do not use for Addressables-specific workflows or scene object edits.
 allowed-tools: Bash, Read, Grep, Glob
 metadata:
   author: akiojin
@@ -10,13 +10,14 @@ metadata:
 
 # Asset & Material Management
 
-Manage the Unity Asset Database, create or modify materials, and control import settings.
+Manage the Unity Asset Database, create or modify materials, create animation clips and sprite atlases, and control import settings.
 Read `references/asset-safety.md` when the task involves dependency analysis, import changes, or material updates that may affect many assets.
 
 ## Use When
 
 - The user wants to inspect, refresh, move, or otherwise manage project assets.
 - The user wants to create or update materials.
+- The user wants to author AnimationClip or SpriteAtlas assets.
 - The user needs import settings or dependency analysis before file changes.
 
 ## Do Not Use When
@@ -43,6 +44,10 @@ unity-cli raw refresh_assets --json '{}'
 unity-cli raw create_material --json '{"materialPath":"Assets/Materials/HeroMat.mat","shader":"Standard"}'
 unity-cli raw modify_material --json '{"materialPath":"Assets/Materials/HeroMat.mat","properties":{"_Color":{"r":1,"g":0,"b":0,"a":1}}}'
 
+# Animation / Sprite assets
+unity-cli raw create_animation_clip --json '{"clipPath":"Assets/Animations/Hero.anim","spritePaths":["Assets/Sprites/Hero/idle_0.png"],"frameRate":12,"loopTime":true}'
+unity-cli raw create_sprite_atlas --json '{"atlasPath":"Assets/Atlases/UI.spriteatlas","packables":["Assets/Sprites/UI"]}'
+
 # Import settings
 unity-cli raw manage_asset_import_settings --json '{"action":"modify","assetPath":"Assets/Textures/hero.png","settings":{"maxTextureSize":1024}}'
 
@@ -54,6 +59,8 @@ unity-cli raw analyze_asset_dependencies --json '{"action":"get_dependencies","a
 
 - "Refresh the asset database and inspect `Assets/Textures/hero.png`."
 - "Create a material for the player and tint it red."
+- "Generate an animation clip from a set of sprite frames."
+- "Create a sprite atlas for a folder of UI sprites."
 - "Check which assets depend on `Player.prefab` before I move it."
 
 ## Common Issues

@@ -72,6 +72,7 @@ Global options:
 | Tool | Description |
 | --- | --- |
 | `create_animator_controller` | Create an AnimatorController asset with parameters, states, and transitions |
+| `create_animation_clip` | Create an AnimationClip asset from sprite frames with frame rate and loop settings |
 | `get_animator_runtime_info` | Get Animator runtime info |
 | `get_animator_state` | Get current Animator state |
 
@@ -94,6 +95,7 @@ Global options:
 | `manage_asset_database` | Manage AssetDatabase operations |
 | `analyze_asset_dependencies` | Analyze asset dependency graph |
 | `manage_asset_import_settings` | Manage asset import settings |
+| `create_sprite_atlas` | Create a SpriteAtlas asset with packables and packing settings |
 | `create_material` | Create a new Material |
 | `modify_material` | Modify Material properties |
 | `refresh_assets` | Refresh the AssetDatabase |

@@ -1,9 +1,12 @@
+using System.IO;
 using System.Linq;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.Animations;
+using UnityEditor.U2D;
 using UnityEngine;
+using UnityEngine.U2D;
 using UnityCliBridge.Handlers;
 
 namespace UnityCliBridge.Tests
@@ -206,6 +209,194 @@ namespace UnityCliBridge.Tests
             StringAssert.Contains("references unknown parameter: isMoving", result["validationErrors"]?.ToString());
         }
 
+        [Test]
+        public void CreateAnimationClip_WithSpriteFramesAndLoopTime_ReturnsSuccess()
+        {
+            string idle0 = CreateSpriteAsset("Idle_0");
+            string idle1 = CreateSpriteAsset("Idle_1");
+            string clipPath = TestFolder + "/Hero.anim";
+
+            JObject result = ToJObject(AssetManagementHandler.CreateAnimationClip(new JObject
+            {
+                ["clipPath"] = clipPath,
+                ["spritePaths"] = new JArray { idle0, idle1 },
+                ["frameRate"] = 12f,
+                ["loopTime"] = true,
+                ["bindingPath"] = ""
+            }));
+
+            Assert.IsNull(result.Value<string>("error"));
+            Assert.IsTrue(result.Value<bool>("success"));
+            Assert.AreEqual(2, result.Value<int>("frameCount"));
+            Assert.AreEqual(12f, result.Value<float>("frameRate"));
+            Assert.IsTrue(result.Value<bool>("loopTime"));
+
+            AnimationClip clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(clipPath);
+            Assert.IsNotNull(clip);
+            Assert.AreEqual(12f, clip.frameRate);
+
+            var binding = new EditorCurveBinding
+            {
+                path = string.Empty,
+                type = typeof(SpriteRenderer),
+                propertyName = "m_Sprite"
+            };
+            ObjectReferenceKeyframe[] keyframes = AnimationUtility.GetObjectReferenceCurve(clip, binding);
+            Assert.IsNotNull(keyframes);
+            Assert.AreEqual(2, keyframes.Length);
+            Assert.AreEqual(idle0, AssetDatabase.GetAssetPath((Sprite)keyframes[0].value));
+            Assert.AreEqual(idle1, AssetDatabase.GetAssetPath((Sprite)keyframes[1].value));
+
+            var serializedClip = new SerializedObject(clip);
+            var clipSettings = serializedClip.FindProperty("m_AnimationClipSettings");
+            Assert.IsNotNull(clipSettings);
+            Assert.IsTrue(clipSettings.FindPropertyRelative("m_LoopTime").boolValue);
+        }
+
+        [Test]
+        public void CreateAnimationClip_WithExistingPathAndOverwriteFalse_ReturnsError()
+        {
+            string clipPath = TestFolder + "/Existing.anim";
+            AssetDatabase.CreateAsset(new AnimationClip(), clipPath);
+
+            JObject result = ToJObject(AssetManagementHandler.CreateAnimationClip(new JObject
+            {
+                ["clipPath"] = clipPath,
+                ["spritePaths"] = new JArray { CreateSpriteAsset("ExistingSprite") }
+            }));
+
+            Assert.AreEqual("AnimationClip request validation failed", result.Value<string>("error"));
+            StringAssert.Contains(
+                "AnimationClip already exists",
+                result["validationErrors"]?[0]?.ToString()
+            );
+        }
+
+        [Test]
+        public void CreateAnimationClip_WithMissingSprite_ReturnsError()
+        {
+            JObject result = ToJObject(AssetManagementHandler.CreateAnimationClip(new JObject
+            {
+                ["clipPath"] = TestFolder + "/MissingSprite.anim",
+                ["spritePaths"] = new JArray { TestFolder + "/Missing.png" }
+            }));
+
+            Assert.AreEqual("AnimationClip request validation failed", result.Value<string>("error"));
+            StringAssert.Contains(
+                "must resolve to an existing Sprite asset",
+                result["validationErrors"]?.ToString()
+            );
+        }
+
+        [Test]
+        public void CreateAnimationClip_WithInvalidFrameRate_ReturnsError()
+        {
+            JObject result = ToJObject(AssetManagementHandler.CreateAnimationClip(new JObject
+            {
+                ["clipPath"] = TestFolder + "/InvalidFrameRate.anim",
+                ["spritePaths"] = new JArray { CreateSpriteAsset("FrameRateSprite") },
+                ["frameRate"] = 0
+            }));
+
+            Assert.AreEqual("AnimationClip request validation failed", result.Value<string>("error"));
+            StringAssert.Contains("frameRate must be greater than 0", result["validationErrors"]?.ToString());
+        }
+
+        [Test]
+        public void CreateSpriteAtlas_WithPackableFolderAndSettings_ReturnsSuccess()
+        {
+            string atlasPath = TestFolder + "/UI.spriteatlas";
+            JObject result = ToJObject(AssetManagementHandler.CreateSpriteAtlas(new JObject
+            {
+                ["atlasPath"] = atlasPath,
+                ["packables"] = new JArray { TestFolder },
+                ["packingSettings"] = new JObject
+                {
+                    ["padding"] = 4,
+                    ["allowRotation"] = false,
+                    ["tightPacking"] = true
+                },
+                ["textureSettings"] = new JObject
+                {
+                    ["filterMode"] = "Bilinear",
+                    ["generateMipMaps"] = false
+                }
+            }));
+
+            Assert.IsNull(result.Value<string>("error"));
+            Assert.IsTrue(result.Value<bool>("success"));
+            Assert.AreEqual(1, result.Value<int>("packableCount"));
+
+            SpriteAtlas atlas = AssetDatabase.LoadAssetAtPath<SpriteAtlas>(atlasPath);
+            Assert.IsNotNull(atlas);
+
+            Object[] packables = SpriteAtlasExtensions.GetPackables(atlas);
+            Assert.AreEqual(1, packables.Length);
+            Assert.AreEqual(TestFolder, AssetDatabase.GetAssetPath(packables[0]));
+
+            SpriteAtlasPackingSettings packingSettings = SpriteAtlasExtensions.GetPackingSettings(atlas);
+            Assert.AreEqual(4, packingSettings.padding);
+            Assert.IsFalse(packingSettings.enableRotation);
+            Assert.IsTrue(packingSettings.enableTightPacking);
+
+            SpriteAtlasTextureSettings textureSettings = SpriteAtlasExtensions.GetTextureSettings(atlas);
+            Assert.AreEqual(FilterMode.Bilinear, textureSettings.filterMode);
+            Assert.IsFalse(textureSettings.generateMipMaps);
+        }
+
+        [Test]
+        public void CreateSpriteAtlas_WithExistingPathAndOverwriteFalse_ReturnsError()
+        {
+            string atlasPath = TestFolder + "/Existing.spriteatlas";
+            AssetDatabase.CreateAsset(new SpriteAtlas(), atlasPath);
+
+            JObject result = ToJObject(AssetManagementHandler.CreateSpriteAtlas(new JObject
+            {
+                ["atlasPath"] = atlasPath
+            }));
+
+            Assert.AreEqual("SpriteAtlas request validation failed", result.Value<string>("error"));
+            StringAssert.Contains(
+                "SpriteAtlas already exists",
+                result["validationErrors"]?[0]?.ToString()
+            );
+        }
+
+        [Test]
+        public void CreateSpriteAtlas_WithInvalidPackablePath_ReturnsError()
+        {
+            JObject result = ToJObject(AssetManagementHandler.CreateSpriteAtlas(new JObject
+            {
+                ["atlasPath"] = TestFolder + "/InvalidPackable.spriteatlas",
+                ["packables"] = new JArray { TestFolder + "/MissingFolder" }
+            }));
+
+            Assert.AreEqual("SpriteAtlas request validation failed", result.Value<string>("error"));
+            StringAssert.Contains(
+                "must point to an existing folder, Sprite, or Texture2D asset",
+                result["validationErrors"]?[0]?.ToString()
+            );
+        }
+
+        [Test]
+        public void CreateSpriteAtlas_WithInvalidFilterMode_ReturnsError()
+        {
+            JObject result = ToJObject(AssetManagementHandler.CreateSpriteAtlas(new JObject
+            {
+                ["atlasPath"] = TestFolder + "/InvalidFilter.spriteatlas",
+                ["textureSettings"] = new JObject
+                {
+                    ["filterMode"] = "Nearest"
+                }
+            }));
+
+            Assert.AreEqual("SpriteAtlas request validation failed", result.Value<string>("error"));
+            StringAssert.Contains(
+                "textureSettings.filterMode must be one of Point, Bilinear, Trilinear",
+                result["validationErrors"]?.ToString()
+            );
+        }
+
         private static JObject ToJObject(object result)
         {
             return result as JObject ?? JObject.FromObject(result);
@@ -221,6 +412,37 @@ namespace UnityCliBridge.Tests
             string parent = path.Substring(0, path.LastIndexOf('/'));
             string folderName = path.Substring(path.LastIndexOf('/') + 1);
             AssetDatabase.CreateFolder(parent, folderName);
+        }
+
+        private static string CreateSpriteAsset(string name)
+        {
+            string path = $"{TestFolder}/{name}.png";
+            string absolutePath = Path.Combine(
+                Directory.GetParent(Application.dataPath).FullName,
+                path
+            );
+            var texture = new Texture2D(4, 4);
+            texture.SetPixels(new[]
+            {
+                Color.red, Color.red, Color.red, Color.red,
+                Color.red, Color.red, Color.red, Color.red,
+                Color.red, Color.red, Color.red, Color.red,
+                Color.red, Color.red, Color.red, Color.red,
+            });
+            texture.Apply();
+            File.WriteAllBytes(absolutePath, texture.EncodeToPNG());
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
+
+            var importer = AssetImporter.GetAtPath(path) as TextureImporter;
+            Assert.IsNotNull(importer);
+            importer.textureType = TextureImporterType.Sprite;
+            importer.spriteImportMode = SpriteImportMode.Single;
+            importer.mipmapEnabled = false;
+            importer.SaveAndReimport();
+
+            var sprite = AssetDatabase.LoadAssetAtPath<Sprite>(path);
+            Assert.IsNotNull(sprite);
+            return path;
         }
 
         private static string CreateClipAsset(string name)
