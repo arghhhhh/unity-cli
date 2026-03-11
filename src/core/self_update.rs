@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime};
 
@@ -55,7 +55,7 @@ fn last_check_path() -> anyhow::Result<PathBuf> {
     Ok(install_dir_for(ManagedBinary::UnityCli)?.join("LAST_UPDATE_CHECK"))
 }
 
-fn is_recent(path: &PathBuf) -> bool {
+fn is_recent(path: &Path) -> bool {
     fs::metadata(path)
         .and_then(|m| m.modified())
         .ok()
@@ -63,14 +63,14 @@ fn is_recent(path: &PathBuf) -> bool {
         .is_some_and(|age| age < Duration::from_secs(THROTTLE_SECS))
 }
 
-fn touch(path: &PathBuf) {
+fn touch(path: &Path) {
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
     let _ = fs::write(path, b"");
 }
 
-fn run_update(marker: &PathBuf) -> anyhow::Result<()> {
+fn run_update(marker: &Path) -> anyhow::Result<()> {
     let latest = fetch_latest_release(ManagedBinary::UnityCli);
 
     // Always touch the marker, even on failure, to prevent hammering the API.

@@ -1,3 +1,9 @@
+## [0.7.2] - 2026-03-11
+
+### 🐛 Bug Fixes
+
+- Use Path instead of PathBuf for borrowed references in self_update
+
 ## [0.7.1] - 2026-03-11
 
 ### 🐛 Bug Fixes
