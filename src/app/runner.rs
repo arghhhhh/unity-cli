@@ -26,7 +26,7 @@ pub async fn run_with_cli(cli: Cli) -> Result<()> {
 
     // Background self-update (non-blocking). Skipped for `cli` subcommands
     // which manage the binary themselves.
-    let update_handle = if !matches!(&cli.command, Command::Cli { .. }) {
+    let mut update_handle = if !matches!(&cli.command, Command::Cli { .. }) {
         crate::core::self_update::maybe_self_update()
     } else {
         None
@@ -189,7 +189,7 @@ pub async fn run_with_cli(cli: Cli) -> Result<()> {
             UnitydCommand::Start => {
                 // Wait for the self-update to finish before starting the daemon
                 // so the daemon process uses the latest binary.
-                if let Some(handle) = update_handle {
+                if let Some(handle) = update_handle.take() {
                     let _ = handle.join();
                 }
                 let value = unityd::start_background()?;
@@ -211,6 +211,13 @@ pub async fn run_with_cli(cli: Cli) -> Result<()> {
             let value = execute_batch(&cli, json.as_deref(), *stdin).await?;
             print_value(&value, cli.output)?;
         }
+    }
+
+    // Wait for background self-update to complete before process exit so the
+    // downloaded binary is fully written to disk.  Command output has already
+    // been printed, so the user sees results immediately.
+    if let Some(handle) = update_handle {
+        let _ = handle.join();
     }
 
     Ok(())
