@@ -50,6 +50,13 @@ This downloads the latest release binary to `~/.unity/tools/unity-cli/{rid}/`
 and symlinks it to `~/.local/bin/unity-cli`. After the initial install the CLI
 checks for updates automatically in the background — no manual upgrades needed.
 
+If `~/.local/bin` is not in your PATH, add the following to your shell profile
+(e.g. `~/.zshrc` or `~/.bashrc`):
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
 Set `UNITY_CLI_NO_AUTO_UPDATE=1` to disable auto-update.
 
 ### Manual Install
