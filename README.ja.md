@@ -72,6 +72,16 @@ https://github.com/akiojin/unity-cli.git?path=UnityCliBridge/Packages/unity-cli-
 unity-cli system ping
 ```
 
+managed バイナリの確認と更新:
+
+```bash
+unity-cli cli doctor
+unity-cli cli install
+```
+
+`unityd` と `lspd` は daemon 起動時に managed `unity-cli` / C# LSP バイナリを自動更新します。
+managed copy は `UNITY_CLI_TOOLS_ROOT`（未指定時は OS 既定の tools ディレクトリ）配下に配置され、確認プロンプトなしで更新されます。
+
 ## スキル (13)
 
 | カテゴリ | スキル |

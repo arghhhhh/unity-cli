@@ -1,12 +1,36 @@
 ---
 name: unity-csharp-navigate
-description: Explore C# code in Unity projects — read files, search symbols, find references, and list packages.
+description: Explore Unity C# code without modifying files. Use when the user asks to read scripts, search text, find symbols, trace references, inspect namespaces or packages, or understand where a class, method, or field is used. Do not use for code edits, renames, or refactors; use the editing skill for those.
 allowed-tools: Bash, Read, Grep, Glob
+metadata:
+  author: akiojin
+  version: 0.2.0
+  category: code
 ---
 
 # C# Code Exploration
 
-Navigate and search C# source using the unity-cli local tools (LSP-backed).
+Navigate and search C# source using the unity-cli local tools.
+Read `references/code-search-playbook.md` when you need indexing strategy, path narrowing, or reference tracing guidance.
+
+## Use When
+
+- The user wants to inspect a script or understand existing C# behavior.
+- The user asks where a symbol is defined or referenced.
+- The user wants to search packages or source trees before making a change.
+
+## Do Not Use When
+
+- The user wants to modify code or create new C# files.
+- The task depends on Unity scene state rather than source files.
+
+## Recommended Flow
+
+1. Build or refresh the index before symbol-heavy queries.
+2. Start with `read` or `search` to anchor on the right file or path.
+3. Use `get_symbols`, `find_symbol`, and `find_refs` once the target identifier is clear.
+4. Narrow the search path or page size if the result set is large.
+5. Use `list_packages` when the question might involve packages rather than project sources.
 
 ## Commands
 
@@ -30,8 +54,15 @@ unity-cli raw build_index --json '{}'
 unity-cli raw list_packages --json '{}'
 ```
 
-## Tips
+## Examples
 
-- These commands run locally (no Unity Editor connection required).
-- Build the index first with `unity-cli raw build_index` for fast symbol lookups.
-- Use `path` in `search` to narrow scope.
+- "Read `PlayerController.cs` and explain how jumping works."
+- "Find every reference to `Health` in project scripts."
+- "List installed packages and check whether Input System is present."
+
+## Common Issues
+
+- Symbol lookups return nothing: run `unity-cli raw build_index --json '{}'` or `update_index` for the changed path.
+- Results are too broad: use `path` in `search` or `pageSize` in `find_refs`.
+- The user needs an actual code change: hand off to `unity-csharp-edit` after gathering context.
+- These tools work locally; a Unity Editor connection is not required.
