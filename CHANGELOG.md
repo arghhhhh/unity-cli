@@ -1,3 +1,15 @@
+## [0.5.1] - 2026-03-11
+
+### 🐛 Bug Fixes
+
+- *(ci)* Stabilize perf and daemon validation
+
+### ⚙️ Miscellaneous Tasks
+
+- Skip test workflow for main pull requests
+- *(claude)* Update local settings
+- Use local lsp publish for perf checks
+
 ## [0.5.0] - 2026-03-11
 
 ### 🐛 Bug Fixes
