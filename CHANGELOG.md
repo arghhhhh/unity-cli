@@ -1,3 +1,14 @@
+## [0.7.0] - 2026-03-11
+
+### 🚀 Features
+
+- Add animator controller creation command
+- Add animation clip and sprite atlas commands
+
+### 📚 Documentation
+
+- Add PATH setup instructions to Quick Install section
+
 ## [0.6.0] - 2026-03-11
 
 ### 🚀 Features
