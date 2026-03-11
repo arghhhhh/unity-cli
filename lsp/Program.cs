@@ -1449,7 +1449,7 @@ sealed class LspServer
     private static string? ContainerName(string namePath)
         => LspPathUtilities.ContainerName(namePath);
 
-    private static int SymbolKindCode(string kind) => kind switch
+    private static int SymbolKindCode(string kind)
         => LspCodeIndexModels.SymbolKindCode(kind);
 
     private List<UnityCli.Lsp.Core.CodeIndexEntry> CollectEntries(SyntaxNode root, string relativePath) =>
