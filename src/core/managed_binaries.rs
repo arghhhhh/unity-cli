@@ -466,14 +466,13 @@ fn sha256_file(path: &Path) -> Result<String> {
 }
 
 fn replace_file_atomic(tmp: &Path, dest: &Path) -> Result<()> {
-    match fs::rename(tmp, dest) {
-        Ok(_) => Ok(()),
-        Err(_) => {
-            let _ = fs::remove_file(dest);
-            fs::rename(tmp, dest)
-                .with_context(|| format!("Failed to move {} to {}", tmp.display(), dest.display()))
-        }
-    }
+    // tmp is always in the same directory as dest (created via
+    // `dest.with_extension("download")`), so rename is an atomic
+    // same-filesystem operation that overwrites dest in place.
+    // Never delete dest before rename — that risks leaving no binary at all
+    // if the process is interrupted.
+    fs::rename(tmp, dest)
+        .with_context(|| format!("Failed to move {} to {}", tmp.display(), dest.display()))
 }
 
 fn http_client() -> Result<Agent> {

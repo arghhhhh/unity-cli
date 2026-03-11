@@ -1,3 +1,9 @@
+## [0.7.1] - 2026-03-11
+
+### 🐛 Bug Fixes
+
+- Ensure self-update completes before process exit and prevent binary loss
+
 ## [0.7.0] - 2026-03-11
 
 ### 🚀 Features
