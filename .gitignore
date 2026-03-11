@@ -116,7 +116,7 @@ lsp/coverage.cobertura.xml
 UnityCliBridge/Assets/Scripts/Generated/
 UnityCliBridge/Assets/Scripts/Generated.meta
 
-# Generated Unity scenes for E2E smoke tests
+# Generated Unity scenes
 UnityCliBridge/Assets/Scenes/Generated/
 UnityCliBridge/Assets/Scenes/Generated.meta
 

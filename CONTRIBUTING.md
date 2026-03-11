@@ -74,11 +74,12 @@ To merge a Pull Request into main, the following CI checks must pass:
 
 PRs with failing tests cannot be merged.
 
-## E2E Tests
+## Local Unity E2E
 
-Unity E2E tests run via manual trigger (`workflow_dispatch`).
-Generated E2E scenes are written to `UnityCliBridge/Assets/Scenes/Generated/E2E/` (gitignored).
-See `docs/development.md` for instructions on running them locally.
+Unity E2E is not part of CI. Run it locally only when you need live Unity listener validation.
+
+- Smoke: `scripts/e2e-test.sh`
+- Full local sweep: `scripts/e2e-all-tools.sh`
 
 ## Branch Policy
 
@@ -182,10 +183,12 @@ Pull Request を main にマージするには、以下の CI チェックがす
 
 テストが失敗している PR はマージできません。
 
-## E2E テスト
+## ローカル Unity E2E
 
-Unity 実機 E2E テストは手動トリガー (`workflow_dispatch`) で実行されます。
-ローカルでの実行方法は `docs/development.md` を参照してください。
+Unity E2E は CI では実行しません。live Unity listener の確認が必要なときだけローカルで実行してください。
+
+- スモーク: `scripts/e2e-test.sh`
+- フルローカル確認: `scripts/e2e-all-tools.sh`
 
 ## ブランチ運用
 
