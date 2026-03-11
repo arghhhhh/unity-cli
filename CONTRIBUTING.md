@@ -7,7 +7,7 @@ Thanks for contributing to `unity-cli`.
 ## Prerequisites
 
 - Rust stable
-- .NET SDK 9.0+ (for `lsp/` tests)
+- .NET SDK 10.0+ (for `lsp/` tests)
 - Node.js 20+ + pnpm (for markdown/commit tooling)
 - Unity 6+ (when validating Unity package behavior)
 
@@ -51,7 +51,7 @@ cargo test
 dotnet test lsp/Server.Tests.csproj
 ```
 
-.NET SDK 9 が必要です。`dotnet --version` で 9.x を確認してください。
+.NET SDK 10 が必要です。`dotnet --version` で 10.x を確認してください。
 
 ### Pre-push Hook
 
@@ -131,7 +131,7 @@ Recommended text:
 ## 前提ツール
 
 - Rust stable
-- .NET SDK 9.0+（`lsp/` テスト用）
+- .NET SDK 10.0+（`lsp/` テスト用）
 - Node.js 20+ と pnpm（ドキュメント/コミット系ツール用）
 - Unity 6+（Unityパッケージ挙動確認時）
 

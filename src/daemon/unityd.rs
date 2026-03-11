@@ -13,6 +13,8 @@ use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
 use crate::config::RuntimeConfig;
+use crate::core::contracts::BatchItem;
+use crate::daemon::runtime::DaemonRuntimePaths;
 use crate::lsp_manager;
 use crate::transport::UnityClient;
 
@@ -37,12 +39,6 @@ enum DaemonRequest {
     Status,
     Ping,
     Stop,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BatchItem {
-    pub tool: String,
-    pub params: Value,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -104,19 +100,16 @@ impl ConnectionPool {
 }
 
 fn tools_dir() -> Result<PathBuf> {
-    let dir = lsp_manager::tools_root()?;
-    fs::create_dir_all(&dir)
-        .with_context(|| format!("Failed to create tools directory: {}", dir.display()))?;
-    Ok(dir)
+    DaemonRuntimePaths::new("unityd")?.dir()
 }
 
 fn pid_file_path() -> Result<PathBuf> {
-    Ok(tools_dir()?.join("unityd.pid"))
+    DaemonRuntimePaths::new("unityd")?.pid_file()
 }
 
 #[cfg(unix)]
 fn socket_path() -> Result<PathBuf> {
-    Ok(tools_dir()?.join("unityd.sock"))
+    DaemonRuntimePaths::new("unityd")?.socket_file()
 }
 
 #[cfg(not(unix))]
@@ -139,15 +132,27 @@ fn write_pid_file() -> Result<()> {
 }
 
 fn cleanup_stale_files() {
-    if let Ok(path) = pid_file_path() {
-        let _ = fs::remove_file(path);
+    if let Ok(paths) = DaemonRuntimePaths::new("unityd") {
+        paths.cleanup();
     }
+}
+
+fn cleanup_stale_files_on_start() {
+    if ping().is_ok() {
+        return;
+    }
+
     #[cfg(unix)]
-    {
-        if let Ok(path) = socket_path() {
-            let _ = fs::remove_file(path);
-        }
+    if connect_client().is_ok() {
+        return;
     }
+
+    #[cfg(not(unix))]
+    if connect_client().is_ok() {
+        return;
+    }
+
+    cleanup_stale_files();
 }
 
 fn daemon_command_path() -> Result<PathBuf> {
@@ -158,6 +163,13 @@ fn append_cli_status(payload: &mut Value) {
     let Some(map) = payload.as_object_mut() else {
         return;
     };
+
+    if let Ok(dir) = tools_dir() {
+        map.insert(
+            "runtimeDir".to_string(),
+            Value::String(dir.to_string_lossy().to_string()),
+        );
+    }
 
     if let Some(path) = std::env::current_exe()
         .ok()
@@ -211,7 +223,7 @@ pub fn start_background() -> Result<Value> {
         }
     }
 
-    cleanup_stale_files();
+    cleanup_stale_files_on_start();
 
     let exe = daemon_command_path()?;
     Command::new(&exe)
@@ -803,7 +815,10 @@ mod tests {
         assert!(dir.is_dir());
         assert_eq!(
             dir,
-            crate::lsp_manager::tools_root().expect("shared tools root should resolve")
+            crate::daemon::runtime::DaemonRuntimePaths::new("unityd")
+                .expect("runtime paths should resolve")
+                .dir()
+                .expect("unityd runtime dir should resolve")
         );
     }
 
@@ -940,6 +955,7 @@ mod tests {
         cleanup_stale_files();
         let status_value = status().expect("status should return fallback when daemon is absent");
         assert_eq!(status_value["running"], false);
+        assert!(status_value["runtimeDir"].is_string());
 
         let stop_value = stop().expect("stop should gracefully succeed when daemon is unavailable");
         assert_eq!(stop_value["stopped"], false);

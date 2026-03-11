@@ -23,6 +23,7 @@ ExportedObj/
 .consulo/
 *.csproj
 !lsp/*.csproj
+!lsp/Server.Core/*.csproj
 !roslyn-cli/*.csproj
 *.unityproj
 *.sln
@@ -103,6 +104,9 @@ UnityCliBridge/.mcp/
 
 lsp/bin/
 lsp/out/
+lsp/Server.Core/bin/
+lsp/Server.Core/obj/
+lsp/coverage.cobertura.xml
 
 # Claude Code Hook temporary files
 .claude/.last-suggest-timestamp

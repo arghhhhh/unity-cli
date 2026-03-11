@@ -38,6 +38,20 @@ pub struct SetActiveResult {
     pub previous_id: Option<String>,
 }
 
+pub fn active_endpoint() -> Result<Option<(String, u16)>> {
+    let registry = load_registry()?;
+    let Some(active_id) = registry.active_id else {
+        return Ok(None);
+    };
+
+    if let Some(entry) = registry.entries.iter().find(|entry| entry.id == active_id) {
+        return Ok(Some((entry.host.clone(), entry.port)));
+    }
+
+    let (host, port) = parse_id(&active_id)?;
+    Ok(Some((host, port)))
+}
+
 pub async fn list_instances(
     host: &str,
     ports: &[u16],

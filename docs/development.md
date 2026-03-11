@@ -27,13 +27,13 @@ This document covers internal development workflow for `unity-cli`.
 # Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# .NET SDK 9
+# .NET SDK 10
 # https://dotnet.microsoft.com/download/dotnet/9.0
 ```
 
 ### Docker
 
-Rust and .NET SDK 9 are included in the development Docker image.
+Rust and .NET SDK 10 are included in the development Docker image.
 
 ```bash
 # Build image
@@ -494,13 +494,13 @@ The Unity-side codebase uses `unity-mcp-server` as its base copy. Differences ar
 # Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# .NET SDK 9
+# .NET SDK 10
 # https://dotnet.microsoft.com/download/dotnet/9.0 からダウンロード
 ```
 
 ### Docker を使う場合
 
-Rust と .NET SDK 9 が同梱された開発用 Docker イメージを利用できます。
+Rust と .NET SDK 10 が同梱された開発用 Docker イメージを利用できます。
 
 ```bash
 # イメージをビルド
