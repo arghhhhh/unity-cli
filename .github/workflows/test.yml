@@ -7,6 +7,9 @@ on:
     branches: [main, develop, "feature/**"]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   rust-test:
     name: Rust Tests (required)
@@ -36,10 +39,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Setup .NET SDK 9
+      - name: Setup .NET SDK 10
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: "9.0.x"
+          dotnet-version: "10.0.x"
 
       - name: Run dotnet test
         run: dotnet test lsp/Server.Tests.csproj
@@ -68,7 +71,22 @@ jobs:
 
       - name: Run Rust coverage gate
         run: |
-          cargo llvm-cov --all-targets --summary-only --fail-under-lines 90
+          mkdir -p coverage/rust
+          cargo llvm-cov \
+            --all-targets \
+            --cobertura \
+            --output-path coverage/rust/cobertura.xml \
+            --fail-under-lines 90
+
+      - name: Upload Rust coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/rust/cobertura.xml
+          flags: rust
+          name: rust-coverage
+          fail_ci_if_error: true
+          verbose: true
 
   lsp-coverage:
     name: LSP Coverage >= 90% (required)
@@ -76,10 +94,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Setup .NET SDK 9
+      - name: Setup .NET SDK 10
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: "9.0.x"
+          dotnet-version: "10.0.x"
 
       - name: Run LSP coverage gate
         run: |
@@ -89,6 +107,16 @@ jobs:
             /p:Threshold=90 \
             /p:ThresholdType=line \
             /p:ThresholdStat=total
+
+      - name: Upload LSP coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: lsp/coverage.cobertura.xml
+          flags: lsp
+          name: lsp-coverage
+          fail_ci_if_error: true
+          verbose: true
 
   lsp-perf:
     name: LSP Performance (required)
@@ -149,34 +177,3 @@ jobs:
             artifacts/lsp-perf-summary.json
             artifacts/lsp-history.jsonl
           retention-days: 30
-
-  unity-e2e:
-    name: Unity E2E Tests
-    runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch'
-    # NOTE: Unity Editor must be running on the runner for E2E tests to pass.
-    # This job is manual-only (workflow_dispatch) because it requires a live
-    # Unity Editor instance connected via TCP.
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Build unity-cli
-        run: cargo build --release
-
-      - name: Run E2E scenarios
-        id: e2e
-        run: |
-          chmod +x scripts/e2e-test.sh
-          scripts/e2e-test.sh
-
-      - name: Upload logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: e2e-logs
-          path: |
-            /tmp/unity-cli-e2e-*.log
-          retention-days: 7

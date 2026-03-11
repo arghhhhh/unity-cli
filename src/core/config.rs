@@ -5,10 +5,22 @@ use anyhow::{bail, Result};
 
 use crate::cli::Cli;
 
+use super::endpoint::{resolve_endpoint, ResolvedEndpoint};
+
 const DEFAULT_HOST: &str = "localhost";
 const DEFAULT_PORT: u16 = 6400;
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 const LEGACY_ENV_PREFIX: &str = concat!("UNITY_", "M", "CP_");
+
+#[derive(Debug, Clone, Default)]
+pub struct RuntimeOverrides {
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub timeout_ms: Option<u64>,
+    pub dry_run: bool,
+    pub project_root: Option<std::path::PathBuf>,
+}
+
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
     pub host: String,
@@ -16,35 +28,86 @@ pub struct RuntimeConfig {
     pub timeout: Duration,
 }
 
+#[derive(Debug, Clone)]
+pub struct ExecutionContext {
+    pub endpoint: ResolvedEndpoint,
+    pub timeout: Duration,
+    pub dry_run: bool,
+    pub project_root: Option<std::path::PathBuf>,
+}
+
 impl RuntimeConfig {
     pub fn from_cli(cli: &Cli) -> Result<Self> {
+        Self::from_overrides(&RuntimeOverrides {
+            host: cli.host.clone(),
+            port: cli.port,
+            timeout_ms: cli.timeout_ms,
+            dry_run: cli.dry_run,
+            project_root: None,
+        })
+    }
+
+    pub fn from_overrides(overrides: &RuntimeOverrides) -> Result<Self> {
         fail_if_legacy_env_set()?;
 
-        let host = cli.host.clone().unwrap_or_else(default_host);
-        let port = cli.port.unwrap_or_else(default_port);
-        let timeout_ms = cli.timeout_ms.unwrap_or_else(default_timeout_ms);
+        let endpoint = resolve_endpoint(overrides.host.clone(), overrides.port)?;
+        let timeout_ms = overrides.timeout_ms.unwrap_or_else(default_timeout_ms);
 
         Ok(Self {
-            host,
-            port,
+            host: endpoint.host,
+            port: endpoint.port,
             timeout: Duration::from_millis(timeout_ms),
         })
     }
 }
 
-fn default_host() -> String {
+impl ExecutionContext {
+    pub fn from_cli(cli: &Cli) -> Result<Self> {
+        Self::from_overrides(&RuntimeOverrides {
+            host: cli.host.clone(),
+            port: cli.port,
+            timeout_ms: cli.timeout_ms,
+            dry_run: cli.dry_run,
+            project_root: None,
+        })
+    }
+
+    pub fn from_overrides(overrides: &RuntimeOverrides) -> Result<Self> {
+        fail_if_legacy_env_set()?;
+
+        let endpoint = resolve_endpoint(overrides.host.clone(), overrides.port)?;
+        let timeout_ms = overrides.timeout_ms.unwrap_or_else(default_timeout_ms);
+
+        Ok(Self {
+            endpoint,
+            timeout: Duration::from_millis(timeout_ms),
+            dry_run: overrides.dry_run,
+            project_root: overrides.project_root.clone(),
+        })
+    }
+
+    pub fn runtime_config(&self) -> RuntimeConfig {
+        RuntimeConfig {
+            host: self.endpoint.host.clone(),
+            port: self.endpoint.port,
+            timeout: self.timeout,
+        }
+    }
+}
+
+pub fn default_host() -> String {
     read_env(&["UNITY_CLI_HOST"]).unwrap_or_else(|| DEFAULT_HOST.to_string())
 }
 
-fn default_port() -> u16 {
+pub fn default_port() -> u16 {
     read_env_u16("UNITY_CLI_PORT").unwrap_or(DEFAULT_PORT)
 }
 
-fn default_timeout_ms() -> u64 {
+pub fn default_timeout_ms() -> u64 {
     read_env_u64("UNITY_CLI_TIMEOUT_MS").unwrap_or(DEFAULT_TIMEOUT_MS)
 }
 
-fn fail_if_legacy_env_set() -> Result<()> {
+pub fn fail_if_legacy_env_set() -> Result<()> {
     if env::var_os("UNITY_CLI_UNITYD").is_some() {
         bail!(
             "Environment variable 'UNITY_CLI_UNITYD' has been removed. unityd is now always auto-managed."
@@ -64,7 +127,8 @@ fn fail_if_legacy_env_set() -> Result<()> {
 
     Ok(())
 }
-fn read_env(keys: &[&str]) -> Option<String> {
+
+pub fn read_env(keys: &[&str]) -> Option<String> {
     for key in keys {
         if let Ok(value) = env::var(key) {
             let trimmed = value.trim().to_string();
@@ -76,13 +140,13 @@ fn read_env(keys: &[&str]) -> Option<String> {
     None
 }
 
-fn read_env_u16(key: &str) -> Option<u16> {
+pub fn read_env_u16(key: &str) -> Option<u16> {
     read_env(&[key])
         .and_then(|value| value.parse::<u16>().ok())
         .filter(|port| *port > 0)
 }
 
-fn read_env_u64(key: &str) -> Option<u64> {
+pub fn read_env_u64(key: &str) -> Option<u64> {
     read_env(&[key])
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|timeout| *timeout > 0)
@@ -91,17 +155,14 @@ fn read_env_u64(key: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
 
-    // Serialize env-var tests so they don't interfere with each other.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    /// Helper to temporarily set env vars and clean them up after the closure runs.
     fn with_env_vars<F, R>(vars: &[(&str, &str)], f: F) -> R
     where
         F: FnOnce() -> R,
     {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = crate::test_env::env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         for (key, value) in vars {
             env::set_var(key, value);
         }
@@ -114,7 +175,9 @@ mod tests {
 
     #[test]
     fn returns_none_when_no_keys_set() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = crate::test_env::env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         env::remove_var("UNITY_CLI_HOST");
         let value = read_env(&["UNITY_CLI_HOST"]);
         assert!(value.is_none());
@@ -162,39 +225,68 @@ mod tests {
 
     #[test]
     fn default_host_returns_localhost_without_env() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = crate::test_env::env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         env::remove_var("UNITY_CLI_HOST");
         assert_eq!(default_host(), "localhost");
     }
 
     #[test]
     fn default_port_returns_6400_without_env() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = crate::test_env::env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         env::remove_var("UNITY_CLI_PORT");
         assert_eq!(default_port(), 6400);
     }
 
     #[test]
     fn default_timeout_returns_30000_without_env() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = crate::test_env::env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         env::remove_var("UNITY_CLI_TIMEOUT_MS");
         assert_eq!(default_timeout_ms(), 30_000);
     }
 
     #[test]
+    fn execution_context_uses_defaults() {
+        let _lock = crate::test_env::env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        env::remove_var("UNITY_CLI_HOST");
+        env::remove_var("UNITY_CLI_PORT");
+        env::remove_var("UNITY_CLI_TIMEOUT_MS");
+        let registry_path = std::env::temp_dir().join(format!(
+            "unity-cli-config-defaults-{}.json",
+            std::process::id()
+        ));
+        std::env::set_var("UNITY_CLI_REGISTRY_PATH", &registry_path);
+        let _ = std::fs::remove_file(&registry_path);
+
+        let context = ExecutionContext::from_overrides(&RuntimeOverrides::default())
+            .expect("context should resolve");
+        assert_eq!(context.endpoint.host, "localhost");
+        assert_eq!(context.endpoint.port, 6400);
+
+        std::env::remove_var("UNITY_CLI_REGISTRY_PATH");
+        let _ = std::fs::remove_file(&registry_path);
+    }
+
+    #[test]
     fn fails_when_legacy_alias_is_set() {
         let legacy_key = concat!("UNITY_", "M", "CP_", "TEST_KEY");
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = crate::test_env::env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         env::remove_var("UNITY_CLI_HOST");
         env::remove_var("UNITY_CLI_PORT");
         env::remove_var("UNITY_CLI_TIMEOUT_MS");
         env::set_var(legacy_key, "legacy-value");
 
         let err = fail_if_legacy_env_set().expect_err("legacy env should be rejected");
-        assert!(
-            err.to_string().contains(legacy_key),
-            "error should mention legacy key"
-        );
+        assert!(err.to_string().contains(legacy_key));
         assert!(err.to_string().contains("UNITY_CLI_*"));
 
         env::remove_var(legacy_key);

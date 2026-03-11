@@ -13,7 +13,7 @@ Run the publish script from the repository root:
 1. Verifies the working tree is clean
 2. Bumps the workspace version with `npm version <major|minor|patch>`
 3. Syncs the Unity package and LSP versions
-4. Runs `cargo test`, `dotnet test lsp/Server.Tests.csproj`, and `cargo publish --dry-run`
+4. Runs `cargo test`, `dotnet test lsp/Server.Tests.csproj` on .NET 10, and `cargo publish --dry-run`
 5. Commits the version sync, creates `vX.Y.Z`, and runs `cargo publish`
 6. Pushes the release commit and tag
 

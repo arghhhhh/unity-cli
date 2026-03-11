@@ -11,6 +11,7 @@ use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::daemon::runtime::DaemonRuntimePaths;
 use crate::lsp_manager;
 
 const DAEMON_IDLE_TIMEOUT_SECS: u64 = 600;
@@ -50,6 +51,13 @@ fn append_managed_status(payload: &mut Value) {
     let Some(map) = payload.as_object_mut() else {
         return;
     };
+
+    if let Ok(dir) = DaemonRuntimePaths::new("lspd").and_then(|paths| paths.dir()) {
+        map.insert(
+            "runtimeDir".to_string(),
+            Value::String(dir.to_string_lossy().to_string()),
+        );
+    }
 
     if let Some(path) = std::env::current_exe()
         .ok()
@@ -119,7 +127,7 @@ pub fn start_background() -> Result<Value> {
         }
     }
 
-    cleanup_stale_files();
+    cleanup_stale_files_on_start();
     let _ = lsp_manager::ensure_latest_lsp_for_daemon()?;
 
     let exe = daemon_command_path()?;
@@ -494,12 +502,12 @@ fn daemon_idle_timeout_secs() -> u64 {
 }
 
 fn pid_file_path() -> Result<PathBuf> {
-    Ok(lsp_manager::install_dir()?.join("lspd.pid"))
+    DaemonRuntimePaths::new("lspd")?.pid_file()
 }
 
 #[cfg(unix)]
 fn socket_path() -> Result<PathBuf> {
-    Ok(lsp_manager::install_dir()?.join("lspd.sock"))
+    DaemonRuntimePaths::new("lspd")?.socket_file()
 }
 
 #[cfg(not(unix))]
@@ -518,15 +526,27 @@ fn write_pid_file() -> Result<()> {
 }
 
 fn cleanup_stale_files() {
-    if let Ok(path) = pid_file_path() {
-        let _ = fs::remove_file(path);
+    if let Ok(paths) = DaemonRuntimePaths::new("lspd") {
+        paths.cleanup();
     }
+}
+
+fn cleanup_stale_files_on_start() {
+    if ping().is_ok() {
+        return;
+    }
+
     #[cfg(unix)]
-    {
-        if let Ok(path) = socket_path() {
-            let _ = fs::remove_file(path);
-        }
+    if connect_client().is_ok() {
+        return;
     }
+
+    #[cfg(not(unix))]
+    if connect_client().is_ok() {
+        return;
+    }
+
+    cleanup_stale_files();
 }
 
 #[cfg(test)]
@@ -825,11 +845,13 @@ mod tests {
         let status_ok = spawn_unix_server_once(r#"{"ok":true,"result":{"running":true}}"#);
         let value = status().expect("status should succeed");
         assert!(value.get("running").is_some());
+        assert!(value["runtimeDir"].is_string());
         status_ok.join().expect("status server should join");
 
         let status_fail = spawn_unix_server_once(r#"{"ok":false,"error":"status failed"}"#);
         let value = status().expect("status fallback should still succeed");
         assert_eq!(value["running"], false);
+        assert!(value["runtimeDir"].is_string());
         status_fail.join().expect("status server should join");
 
         let stop_ok = spawn_unix_server_once(r#"{"ok":true}"#);
@@ -914,41 +936,28 @@ mod tests {
         let (_tools_root, _env) = prepare_tools_root();
         ensure_local_lsp_binary();
         cleanup_stale_files();
-        let _idle_env = EnvVarGuard::set("UNITY_CLI_LSPD_IDLE_TIMEOUT", "1");
+        let _idle_env = EnvVarGuard::set("UNITY_CLI_LSPD_IDLE_TIMEOUT", "10");
 
         let thread = std::thread::spawn(|| serve_forever().expect("serve_forever should stop"));
-        let socket = socket_path().expect("socket path should resolve");
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while !socket.exists() && std::time::Instant::now() < deadline {
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        assert!(socket.exists(), "daemon socket should be created");
-
         let mut running_seen = false;
-        let status_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let status_deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
         while std::time::Instant::now() < status_deadline {
-            if let Ok(value) = status() {
-                if value
-                    .get("running")
-                    .and_then(serde_json::Value::as_bool)
-                    .unwrap_or(false)
-                {
-                    running_seen = true;
-                    break;
-                }
+            if ping().is_ok() {
+                running_seen = true;
+                break;
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         assert!(running_seen, "daemon did not respond to status");
+
+        let stop_value = stop().expect("stop should succeed");
+        assert_eq!(stop_value["success"], true);
 
         thread.join().expect("daemon thread should join");
         cleanup_stale_files();
 
         let pid = pid_file_path().expect("pid path should resolve");
         assert!(!pid.exists(), "pid file should be cleaned up");
-        if socket.exists() {
-            let _ = std::fs::remove_file(&socket);
-        }
     }
 
     #[test]

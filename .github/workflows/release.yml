@@ -195,10 +195,10 @@ jobs:
         with:
           ref: ${{ needs.create-tag.outputs.tag }}
 
-      - name: Setup .NET SDK 9
+      - name: Setup .NET SDK 10
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: 9.0.x
+          dotnet-version: 10.0.x
 
       - name: Publish LSP server
         run: >
@@ -210,11 +210,11 @@ jobs:
 
       - name: Rename artifact (Unix)
         if: runner.os != 'Windows'
-        run: cp lsp/bin/Release/net9.0/${{ matrix.rid }}/publish/Server ${{ matrix.artifact }}
+        run: cp lsp/bin/Release/net10.0/${{ matrix.rid }}/publish/Server ${{ matrix.artifact }}
 
       - name: Rename artifact (Windows)
         if: runner.os == 'Windows'
-        run: Copy-Item "lsp/bin/Release/net9.0/${{ matrix.rid }}/publish/Server.exe" "${{ matrix.artifact }}"
+        run: Copy-Item "lsp/bin/Release/net10.0/${{ matrix.rid }}/publish/Server.exe" "${{ matrix.artifact }}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7

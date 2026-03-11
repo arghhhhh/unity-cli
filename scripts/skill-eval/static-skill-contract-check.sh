@@ -6,7 +6,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 SKILLS_DIR="${REPO_ROOT}/.claude-plugin/plugins/unity-cli/skills"
-CATALOG_FILE="${REPO_ROOT}/src/tool_catalog.rs"
+CATALOG_FILE="${REPO_ROOT}/src/tooling/tool_catalog.rs"
 REPORT_PATH="${REPO_ROOT}/specs/perf/skill-static-report.json"
 JSON_OUTPUT=0
 
@@ -16,7 +16,7 @@ Usage: scripts/skill-eval/static-skill-contract-check.sh [options]
 
 Options:
   --skills-dir <path>   Skills directory (default: .claude-plugin/plugins/unity-cli/skills)
-  --catalog <path>      Rust tool catalog file (default: src/tool_catalog.rs)
+  --catalog <path>      Rust tool catalog file (default: src/tooling/tool_catalog.rs)
   --report <path>       JSON report path (default: specs/perf/skill-static-report.json)
   --json                Print JSON report to stdout
 USAGE
@@ -570,7 +570,7 @@ for skill_file in sorted(skills_dir.glob("*/SKILL.md")):
                     "skill": entry["skill"],
                     "line": idx,
                     "tool": tool,
-                    "message": "Tool not found in src/tool_catalog.rs",
+                    "message": "Tool not found in src/tooling/tool_catalog.rs",
                 }
             )
             continue

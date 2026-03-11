@@ -27,13 +27,13 @@ This document covers internal development workflow for `unity-cli`.
 # Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# .NET SDK 9
+# .NET SDK 10
 # https://dotnet.microsoft.com/download/dotnet/9.0
 ```
 
 ### Docker
 
-Rust and .NET SDK 9 are included in the development Docker image.
+Rust and .NET SDK 10 are included in the development Docker image.
 
 ```bash
 # Build image
@@ -170,15 +170,15 @@ git config core.hooksPath .husky
 
 Keep test-first commit order whenever possible.
 
-## E2E Tests
+## Local Unity E2E
 
-E2E tests require a running Unity Editor with TCP server active.
+Unity E2E is not executed in CI. Use it only for local validation against a running Unity Editor with the TCP listener active.
 
 ### Preparation
 
-1. Open the Unity project in Unity Editor
-2. Ensure the UnityCliBridge package is installed
-3. Enter Play mode and verify the TCP server is running
+1. Open `UnityCliBridge` in Unity Editor.
+2. Ensure the Unity CLI Bridge package is loaded.
+3. Confirm the listener is active on `UNITY_CLI_HOST` / `UNITY_CLI_PORT` (default `127.0.0.1:6400`).
 
 ### Execution
 
@@ -186,36 +186,21 @@ E2E tests require a running Unity Editor with TCP server active.
 # Build
 cargo build --release
 
-# Smoke E2E (default 127.0.0.1:6400)
+# Smoke E2E
 scripts/e2e-test.sh
 
-# Full coverage E2E (all tools + LSP perf check)
+# Full local E2E sweep
 scripts/e2e-all-tools.sh
 
-# Full coverage E2E with custom host/port
+# Full local E2E sweep with custom host/port
 scripts/e2e-all-tools.sh --host 192.168.1.10 --port 9090
-
-# LSP perf check only (full case set + size/token metrics + history append)
-scripts/lsp-perf-check.sh
 ```
-
-### Test Scenarios
-
-| Scenario | Command | Verification |
-| ---------- | --------- | ------------- |
-| system ping | `unity-cli system ping` | TCP connectivity check |
-| raw create_scene | `unity-cli raw create_scene --json '{"sceneName":"E2ETest_YYYYmmdd-HHMMSS","path":"Assets/Scenes/Generated/E2E/"}'` | Scene creation |
-| tool list | `unity-cli tool list` | Tool listing |
-
-Generated E2E scenes are created under `UnityCliBridge/Assets/Scenes/Generated/E2E/` and are ignored by Git.
-
-Logs on failure are saved to `/tmp/unity-cli-e2e-*.log`.
 
 ### Scene Layout Policy
 
 - Stable tracked scenes stay in `UnityCliBridge/Assets/Scenes/` (`SampleScene` only).
-- Generated E2E scenes are created in `UnityCliBridge/Assets/Scenes/Generated/E2E/` and must not be committed.
-- UI manual test scenes (UGUI/UITK/IMGUI) are generated on demand via `Tools/Unity CLI/UI Tests/*` into `UnityCliBridge/Assets/Scenes/Generated/UI/`.
+- Local E2E-generated scenes go under `UnityCliBridge/Assets/Scenes/Generated/E2E/` and must not be committed.
+- UI manual test scenes continue to use `UnityCliBridge/Assets/Scenes/Generated/UI/`.
 
 ## Troubleshooting
 
@@ -273,10 +258,8 @@ CI is defined in `.github/workflows/lint.yml`, `.github/workflows/test.yml`, and
 | LSP Tests (required) | push / PR | `dotnet test lsp/Server.Tests.csproj` |
 | LSP Performance (required) | push / PR | `scripts/lsp-perf-check.sh` (full cases + history artifact) |
 | Skill Routing Eval | daily schedule / manual | `scripts/skill-eval/llm-routing-eval.sh` (`.github/workflows/skill-routing-eval.yml`) |
-| Unity E2E Tests | manual (`workflow_dispatch`) | E2E test script |
 
 Skill Contract Check, Rust Tests, LSP Tests, and LSP Performance are required checks for PR merges.
-E2E Tests are manual-only and require a runner with Unity Editor.
 
 ## Capability Catalog
 
@@ -484,8 +467,8 @@ The Unity-side codebase uses `unity-mcp-server` as its base copy. Differences ar
 | ツール | バージョン | 用途 |
 | -------- | ----------- | ------ |
 | Rust toolchain (stable) | latest | CLI 本体のビルド・テスト |
-| .NET SDK | 9.0 | LSP サーバーのビルド・テスト |
-| Unity Editor | 2022.3+ | E2E テスト (実機接続が必要) |
+| .NET SDK | 10.0 | LSP サーバーのビルド・テスト |
+| Unity Editor | 2022.3+ | ローカル Unity listener / ローカル E2E 検証 |
 | Python + `tiktoken` | 3.9+ | LSP 性能計測時のトークン算出（`scripts/lsp-perf-check.sh`） |
 
 ### インストール
@@ -494,13 +477,13 @@ The Unity-side codebase uses `unity-mcp-server` as its base copy. Differences ar
 # Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# .NET SDK 9
-# https://dotnet.microsoft.com/download/dotnet/9.0 からダウンロード
+# .NET SDK 10
+# https://dotnet.microsoft.com/download/dotnet/10.0 からダウンロード
 ```
 
 ### Docker を使う場合
 
-Rust と .NET SDK 9 が同梱された開発用 Docker イメージを利用できます。
+Rust と .NET SDK 10 が同梱された開発用 Docker イメージを利用できます。
 
 ```bash
 # イメージをビルド
@@ -631,15 +614,15 @@ git config core.hooksPath .husky
 2. 最小実装で通す（GREEN）
 3. テストを維持したまま整理（REFACTOR）
 
-## E2E テスト
+## ローカル Unity E2E
 
-E2E テストは Unity Editor が起動している環境で実行します。
+Unity E2E は CI では実行しません。Unity Editor が起動しているローカル環境でのみ実行します。
 
 ### 準備
 
-1. Unity Editor でプロジェクトを開く
-2. UnityCliBridge パッケージが導入されていることを確認する
-3. Play モードに入り、TCP サーバーが起動していることを確認する
+1. `UnityCliBridge` プロジェクトを Unity Editor で開く
+2. Unity CLI Bridge パッケージが読み込まれていることを確認する
+3. `UNITY_CLI_HOST` / `UNITY_CLI_PORT` の listener が起動していることを確認する
 
 ### 実行
 
@@ -647,35 +630,20 @@ E2E テストは Unity Editor が起動している環境で実行します。
 # ビルド
 cargo build --release
 
-# スモークE2E（デフォルト 127.0.0.1:6400）
+# スモークE2E
 scripts/e2e-test.sh
 
-# 全機能E2E（全ツール + LSP性能チェック）
+# フルローカルE2E
 scripts/e2e-all-tools.sh
 
-# 全機能E2E（ホスト・ポート指定）
+# ホスト・ポート指定
 scripts/e2e-all-tools.sh --host 192.168.1.10 --port 9090
-
-# LSP性能チェックのみ（全ケース + サイズ/トークン計測 + 履歴追記）
-scripts/lsp-perf-check.sh
 ```
-
-### テストシナリオ
-
-| シナリオ | コマンド | 確認内容 |
-| ---------- | --------- | --------- |
-| system ping | `unity-cli system ping` | Unity Editor との疎通確認 |
-| raw create_scene | `unity-cli raw create_scene --json '{"sceneName":"E2ETest_YYYYmmdd-HHMMSS","path":"Assets/Scenes/Generated/E2E/"}'` | シーン作成の実行確認 |
-| tool list | `unity-cli tool list` | ツール一覧の取得確認 |
-
-E2E で生成されるシーンは `UnityCliBridge/Assets/Scenes/Generated/E2E/` 配下に作成され、Git 追跡対象外です。
-
-失敗時はログが `/tmp/unity-cli-e2e-*.log` に保存されます。
 
 ### シーン配置ポリシー
 
 - `UnityCliBridge/Assets/Scenes/` 直下は固定で追跡するシーン（`SampleScene` のみ）を配置する
-- E2E 生成シーンは `UnityCliBridge/Assets/Scenes/Generated/E2E/` に作成し、コミットしない
+- ローカル E2E 生成シーンは `UnityCliBridge/Assets/Scenes/Generated/E2E/` に作成し、コミットしない
 - UI 手動検証シーン（UGUI/UITK/IMGUI）は `Tools/Unity CLI/UI Tests/*` で必要時に `UnityCliBridge/Assets/Scenes/Generated/UI/` へ生成する
 
 ## トラブルシューティング
@@ -734,10 +702,8 @@ CI は `.github/workflows/lint.yml` / `.github/workflows/test.yml` / `.github/wo
 | LSP Tests (required) | push / PR | `dotnet test lsp/Server.Tests.csproj` |
 | LSP Performance (required) | push / PR | `scripts/lsp-perf-check.sh`（全ケース実行 + 履歴artifact） |
 | Skill Routing Eval | 毎日スケジュール / 手動 | `scripts/skill-eval/llm-routing-eval.sh`（`.github/workflows/skill-routing-eval.yml`） |
-| Unity E2E Tests | 手動 (`workflow_dispatch`) | E2E テストスクリプトの実行 |
 
 Skill Contract Check / Rust Tests / LSP Tests / LSP Performance は PR マージの必須チェックです。
-E2E Tests は手動トリガーのみで、Unity Editor が起動しているランナーが必要です。
 
 ## 機能カタログ
 
