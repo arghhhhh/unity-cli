@@ -1,3 +1,8 @@
+## [0.6.0] - 2026-03-11
+
+### 🚀 Features
+
+- Add install script and CLI auto-update on startup
 ## [0.5.1] - 2026-03-11
 
 ### 🐛 Bug Fixes

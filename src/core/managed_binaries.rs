@@ -65,17 +65,17 @@ struct ReleaseManifest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct ReleaseAsset {
-    url: String,
-    sha256: String,
+pub(crate) struct ReleaseAsset {
+    pub(crate) url: String,
+    pub(crate) sha256: String,
 }
 
 #[derive(Debug, Clone)]
-struct LatestRelease {
-    repo: String,
-    tag: String,
-    version: String,
-    asset: ReleaseAsset,
+pub(crate) struct LatestRelease {
+    pub(crate) repo: String,
+    pub(crate) tag: String,
+    pub(crate) version: String,
+    pub(crate) asset: ReleaseAsset,
 }
 
 impl ManagedBinary {
@@ -213,13 +213,13 @@ pub fn lsp_install_latest(force_download: bool) -> Result<ManagedBinaryStatus> {
     install_latest_for(ManagedBinary::CSharpLsp, force_download)
 }
 
-fn install_dir_for(managed_binary: ManagedBinary) -> Result<PathBuf> {
+pub(crate) fn install_dir_for(managed_binary: ManagedBinary) -> Result<PathBuf> {
     Ok(tools_root()?
         .join(managed_binary.spec().install_subdir)
         .join(detect_rid()))
 }
 
-fn binary_path_for(managed_binary: ManagedBinary) -> Result<PathBuf> {
+pub(crate) fn binary_path_for(managed_binary: ManagedBinary) -> Result<PathBuf> {
     Ok(install_dir_for(managed_binary)?.join(managed_binary.spec().executable_name))
 }
 
@@ -227,7 +227,7 @@ fn version_path_for(managed_binary: ManagedBinary) -> Result<PathBuf> {
     Ok(install_dir_for(managed_binary)?.join("VERSION"))
 }
 
-fn read_local_version_for(managed_binary: ManagedBinary) -> Option<String> {
+pub(crate) fn read_local_version_for(managed_binary: ManagedBinary) -> Option<String> {
     let path = version_path_for(managed_binary).ok()?;
     fs::read_to_string(path)
         .ok()
@@ -339,7 +339,7 @@ fn ensure_latest_for(
     }
 }
 
-fn download_latest_binary(
+pub(crate) fn download_latest_binary(
     managed_binary: ManagedBinary,
     latest: &LatestRelease,
     dest: &Path,
@@ -388,7 +388,7 @@ fn write_local_version_for(managed_binary: ManagedBinary, version: &str) -> Resu
         .with_context(|| format!("Failed to write VERSION marker: {}", path.display()))
 }
 
-fn fetch_latest_release(managed_binary: ManagedBinary) -> Result<LatestRelease> {
+pub(crate) fn fetch_latest_release(managed_binary: ManagedBinary) -> Result<LatestRelease> {
     let mut errors = Vec::new();
     for repo in managed_binary.spec().repos {
         match fetch_latest_release_for_repo(managed_binary, repo) {

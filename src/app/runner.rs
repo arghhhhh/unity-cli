@@ -24,6 +24,16 @@ pub async fn run() -> Result<()> {
 pub async fn run_with_cli(cli: Cli) -> Result<()> {
     init_tracing(cli.verbose)?;
 
+    // Background self-update (non-blocking). Skipped for `cli` subcommands
+    // which manage the binary themselves.
+    let update_handle = if !matches!(&cli.command, Command::Cli { .. }) {
+        crate::core::self_update::maybe_self_update()
+    } else {
+        None
+    };
+
+    crate::core::self_update::warn_cargo_conflict();
+
     match &cli.command {
         Command::Raw(args) => {
             let value = execute_raw(&cli, args).await?;
@@ -177,6 +187,11 @@ pub async fn run_with_cli(cli: Cli) -> Result<()> {
         },
         Command::Unityd { command } => match command {
             UnitydCommand::Start => {
+                // Wait for the self-update to finish before starting the daemon
+                // so the daemon process uses the latest binary.
+                if let Some(handle) = update_handle {
+                    let _ = handle.join();
+                }
                 let value = unityd::start_background()?;
                 print_value(&value, cli.output)?;
             }

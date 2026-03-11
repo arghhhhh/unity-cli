@@ -40,6 +40,18 @@ separately using one of the manual options below.
 When using this repository with Codex, skills are available via `.codex/skills/` (symlinks to the plugin source).
 No additional setup is required - just clone the repository.
 
+### Quick Install (recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/akiojin/unity-cli/main/scripts/install.sh | sh
+```
+
+This downloads the latest release binary to `~/.unity/tools/unity-cli/{rid}/`
+and symlinks it to `~/.local/bin/unity-cli`. After the initial install the CLI
+checks for updates automatically in the background — no manual upgrades needed.
+
+Set `UNITY_CLI_NO_AUTO_UPDATE=1` to disable auto-update.
+
 ### Manual Install
 
 Download the latest binary from [GitHub
@@ -148,6 +160,7 @@ The script writes progress/results to `migration-report.json` and applies the
 | `UNITY_CLI_TIMEOUT_MS` | Command timeout (ms) | `30000` |
 | `UNITY_CLI_LSP_MODE` | LSP mode (`off` / `auto` / `required`) | `off` |
 | `UNITY_CLI_TOOLS_ROOT` | Downloaded tools root directory | OS default |
+| `UNITY_CLI_NO_AUTO_UPDATE` | Disable background auto-update (`1` to disable) | *(unset)* |
 
 Legacy MCP-prefixed variables are not supported. Use `UNITY_CLI_*` only.
 
