@@ -38,7 +38,7 @@ separately using one of the manual options below.
 ### Codex Skills
 
 When using this repository with Codex, skills are available via `.codex/skills/` (symlinks to the plugin source).
-No additional setup is required — just clone the repository.
+No additional setup is required - just clone the repository.
 
 ### Manual Install
 
@@ -82,7 +82,9 @@ unity-cli cli install
 `unityd` and `lspd` automatically refresh their managed `unity-cli` / C# LSP binaries on daemon startup.
 The managed copies live under `UNITY_CLI_TOOLS_ROOT` (or the OS default tools directory) and are updated without an interactive confirmation prompt.
 
-## Skills (13)
+## Skills (14)
+
+These skills are written as workflow guides, not just command catalogs. They are designed to trigger from natural Unity requests such as "create a test scene", "trace references to this MonoBehaviour", or "run PlayMode tests and capture a screenshot".
 
 | Category | Skills |
 | --- | --- |
@@ -92,6 +94,7 @@ The managed copies live under `UNITY_CLI_TOOLS_ROOT` (or the OS default tools di
 | Code | `unity-csharp-navigate`, `unity-csharp-edit` |
 | Runtime & Testing | `unity-playmode-testing`, `unity-input-system`, `unity-ui-automation` |
 | Editor | `unity-editor-tools` |
+| Maintenance | `gh-skills-sync` |
 
 ## Quick Examples
 

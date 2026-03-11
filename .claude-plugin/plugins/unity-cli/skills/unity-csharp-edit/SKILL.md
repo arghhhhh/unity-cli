@@ -1,12 +1,36 @@
 ---
 name: unity-csharp-edit
-description: Edit, create, rename, and refactor C# code in Unity projects using unity-cli.
+description: Edit Unity C# code with unity-cli and LSP-backed write tools. Use when the user asks to rename symbols, replace method bodies, insert or remove members, create classes, or refactor scripts after inspecting code context. Do not use for read-only inspection; use the C# navigation skill when no code change is required.
 allowed-tools: Bash, Read, Grep, Glob
+metadata:
+  author: akiojin
+  version: 0.2.0
+  category: code
 ---
 
 # C# Change Workflow
 
 Plan and verify C# changes with unity-cli local tools, then apply file edits in the repository.
+Read `references/lsp-write-safety.md` when you need preview-first edits, `namePath` guidance, or post-change verification steps.
+
+## Use When
+
+- The user wants to edit, create, rename, or refactor Unity C# scripts.
+- The task can be expressed through symbol-aware LSP operations or `create_class`.
+- The change should be validated with compilation state after it is applied.
+
+## Do Not Use When
+
+- The user only wants to inspect or explain existing code.
+- The change is primarily about scenes, prefabs, or Unity object state rather than source files.
+
+## Recommended Flow
+
+1. Build or refresh the index, then inspect the target symbol with `read`, `get_symbols`, or `find_symbol`.
+2. Preview the edit with `apply: false` whenever the tool supports it.
+3. Apply one targeted mutation at a time with the appropriate LSP write tool or `create_class`.
+4. Refresh the index for changed paths and check `get_compilation_state`.
+5. If the edit is risky or touches multiple symbols, explain the expected scope before applying it.
 
 ## Commands
 
@@ -50,18 +74,23 @@ unity-cli raw get_compilation_state --json '{}'
 ## LSP Write Tools
 
 All LSP write tools accept `apply` (boolean, default false):
-- `apply: false` — preview mode, returns diff without modifying files
-- `apply: true` — applies changes to disk
+- `apply: false` - preview mode, returns diff without modifying files
+- `apply: true` - applies changes to disk
 
 The `namePath` parameter navigates nested symbols with `/` separators:
-- `"Player"` — top-level class
-- `"Player/Jump"` — method Jump inside class Player
-- `"Player/Config/MaxSpeed"` — field in nested type
+- `"Player"` - top-level class
+- `"Player/Jump"` - method Jump inside class Player
+- `"Player/Config/MaxSpeed"` - field in nested type
 
-## Tips
+## Examples
 
-- Run `update_index` after edits for accurate symbol lookup.
-- Use `get_compilation_state` to check for errors after changes.
-- Preview changes with `apply: false` before applying.
-- Use `validate_text_edits` to check C# syntax before writing files.
-- `create_class` creates the file and directory structure atomically.
+- "Rename `Player/Jump` to `Leap` everywhere it is safe to do so."
+- "Insert a new method after `Player/Jump` and then check compilation."
+- "Create a new `EnemyAI` MonoBehaviour under `Assets/Scripts/AI`."
+
+## Common Issues
+
+- `namePath` does not match the target: run `get_symbols` first and use the exact nested path.
+- A removal may break references: inspect `find_refs` before calling `remove_symbol`.
+- The edited file fails to compile: run `get_compilation_state` and fix the reported diagnostics before continuing.
+- Preview-first edits are safer; use `apply: false` unless the change is trivial and well-scoped.

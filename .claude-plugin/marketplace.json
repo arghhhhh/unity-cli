@@ -1,7 +1,7 @@
 {
   "name": "unity-cli",
   "version": "0.1.0",
-  "description": "Claude Code skills for unity-cli command workflows and Unity CLI Bridge operations.",
+  "description": "Claude Code skills for workflow-oriented unity-cli automation and Unity CLI Bridge operations.",
   "owner": {
     "name": "akiojin",
     "url": "https://github.com/akiojin"
@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "unity-cli",
-      "description": "Claude Code plugin for Rust-based unity-cli workflows.",
+      "description": "Claude Code plugin for workflow-oriented Rust-based unity-cli automation.",
       "version": "0.1.0",
       "source": "./.claude-plugin/plugins/unity-cli",
       "category": "development"
