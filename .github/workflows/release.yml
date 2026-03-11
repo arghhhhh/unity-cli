@@ -115,11 +115,11 @@ jobs:
             binary: unity-cli
           - target: aarch64-apple-darwin
             os: macos-latest
-            artifact: unity-cli-macos-arm64
+            artifact: unity-cli-osx-arm64
             binary: unity-cli
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            artifact: unity-cli-windows-x64.exe
+            artifact: unity-cli-win-x64
             binary: unity-cli.exe
     steps:
       - uses: actions/checkout@v6
@@ -269,8 +269,8 @@ jobs:
           files: |
             artifacts/unity-cli-linux-x64/unity-cli-linux-x64
             artifacts/unity-cli-linux-arm64/unity-cli-linux-arm64
-            artifacts/unity-cli-macos-arm64/unity-cli-macos-arm64
-            artifacts/unity-cli-windows-x64.exe/unity-cli-windows-x64.exe
+            artifacts/unity-cli-osx-arm64/unity-cli-osx-arm64
+            artifacts/unity-cli-win-x64/unity-cli-win-x64
             artifacts/unity-cli-manifest.json
             artifacts/csharp-lsp-linux-x64/csharp-lsp-linux-x64
             artifacts/csharp-lsp-linux-arm64/csharp-lsp-linux-arm64
