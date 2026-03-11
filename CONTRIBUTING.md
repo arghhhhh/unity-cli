@@ -7,7 +7,7 @@ Thanks for contributing to `unity-cli`.
 ## Prerequisites
 
 - Rust stable
-- .NET SDK 9.0+ (for `lsp/` tests)
+- .NET SDK 10.0+ (for `lsp/` tests)
 - Node.js 20+ + pnpm (for markdown/commit tooling)
 - Unity 6+ (when validating Unity package behavior)
 
@@ -51,7 +51,7 @@ cargo test
 dotnet test lsp/Server.Tests.csproj
 ```
 
-.NET SDK 9 が必要です。`dotnet --version` で 9.x を確認してください。
+.NET SDK 10 が必要です。`dotnet --version` で 10.x を確認してください。
 
 ### Pre-push Hook
 
@@ -74,11 +74,12 @@ To merge a Pull Request into main, the following CI checks must pass:
 
 PRs with failing tests cannot be merged.
 
-## E2E Tests
+## Local Unity E2E
 
-Unity E2E tests run via manual trigger (`workflow_dispatch`).
-Generated E2E scenes are written to `UnityCliBridge/Assets/Scenes/Generated/E2E/` (gitignored).
-See `docs/development.md` for instructions on running them locally.
+Unity E2E is not part of CI. Run it locally only when you need live Unity listener validation.
+
+- Smoke: `scripts/e2e-test.sh`
+- Full local sweep: `scripts/e2e-all-tools.sh`
 
 ## Branch Policy
 
@@ -131,7 +132,7 @@ Recommended text:
 ## 前提ツール
 
 - Rust stable
-- .NET SDK 9.0+（`lsp/` テスト用）
+- .NET SDK 10.0+（`lsp/` テスト用）
 - Node.js 20+ と pnpm（ドキュメント/コミット系ツール用）
 - Unity 6+（Unityパッケージ挙動確認時）
 
@@ -182,10 +183,12 @@ Pull Request を main にマージするには、以下の CI チェックがす
 
 テストが失敗している PR はマージできません。
 
-## E2E テスト
+## ローカル Unity E2E
 
-Unity 実機 E2E テストは手動トリガー (`workflow_dispatch`) で実行されます。
-ローカルでの実行方法は `docs/development.md` を参照してください。
+Unity E2E は CI では実行しません。live Unity listener の確認が必要なときだけローカルで実行してください。
+
+- スモーク: `scripts/e2e-test.sh`
+- フルローカル確認: `scripts/e2e-all-tools.sh`
 
 ## ブランチ運用
 

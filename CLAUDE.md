@@ -72,11 +72,11 @@ Node.js + MCP プロトコルベースの旧実装を Rust + TCP 直接通信に
 - ユーザー修正を受けたら、`tasks/lessons.md` に再発防止ルールを追記する
 - セッション開始時に `tasks/lessons.md` の直近パターンを見直してから着手する
 
-## LLM向けE2E実行ルール
+## LLM向けローカルUnity E2E / シーン運用ルール
 
-- LLM が E2E を実行・更新する前に、必ず `docs/development.md` の `E2E Tests` / `E2E テスト` セクションを参照する
-- E2E で生成するシーンは `UnityCliBridge/Assets/Scenes/Generated/E2E/` 配下を使用する
-- 上記生成シーンは `.gitignore` 対象のため、E2E実行結果としてコミットしない
+- ローカルで Unity E2E を実行・更新する前に、`docs/development.md` の `Local Unity E2E` / `ローカル Unity E2E` セクションを参照する
+- ローカル E2E で生成するシーンは `UnityCliBridge/Assets/Scenes/Generated/E2E/` 配下を使用する
+- 上記生成シーンは `.gitignore` 対象のため、E2E 実行結果としてコミットしない
 - ルート直下 (`UnityCliBridge/Assets/Scenes/`) の固定シーンは `SampleScene` のみとする
 - UI 検証シーンが必要な場合は `Tools/Unity CLI/UI Tests/*` で `UnityCliBridge/Assets/Scenes/Generated/UI/` に生成する
 

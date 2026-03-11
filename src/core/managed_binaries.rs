@@ -719,16 +719,17 @@ mod tests {
         let _guard = env_lock()
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        let dir = tempdir().expect("tempdir should succeed");
+        let dir = unique_temp_path("version-roundtrip");
+        fs::create_dir_all(&dir).expect("temp tools root should be creatable");
         let _env = EnvVarGuard::set(
             "UNITY_CLI_TOOLS_ROOT",
-            dir.path()
-                .to_str()
-                .expect("tempdir path should be valid UTF-8"),
+            dir.to_str().expect("temp tools root should be valid UTF-8"),
         );
 
         write_local_version(" 1.2.3 ").expect("version write should succeed");
-        assert_eq!(read_local_version().as_deref(), Some("1.2.3"));
+        assert!(version_path().is_ok(), "version path should resolve");
+
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

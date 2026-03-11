@@ -23,6 +23,7 @@ ExportedObj/
 .consulo/
 *.csproj
 !lsp/*.csproj
+!lsp/Server.Core/*.csproj
 !roslyn-cli/*.csproj
 *.unityproj
 *.sln
@@ -103,6 +104,9 @@ UnityCliBridge/.mcp/
 
 lsp/bin/
 lsp/out/
+lsp/Server.Core/bin/
+lsp/Server.Core/obj/
+lsp/coverage.cobertura.xml
 
 # Claude Code Hook temporary files
 .claude/.last-suggest-timestamp
@@ -112,7 +116,7 @@ lsp/out/
 UnityCliBridge/Assets/Scripts/Generated/
 UnityCliBridge/Assets/Scripts/Generated.meta
 
-# Generated Unity scenes for E2E smoke tests
+# Generated Unity scenes
 UnityCliBridge/Assets/Scenes/Generated/
 UnityCliBridge/Assets/Scenes/Generated.meta
 

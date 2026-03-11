@@ -10,6 +10,7 @@ using System.Collections.Generic;
 using System.Collections.Concurrent;
 using System.Threading;
 using System.Threading.Tasks;
+using UnityCli.Lsp.Core;
 
 // Minimal LSP over stdio: initialize / initialized / shutdown / exit / documentSymbol / workspace/symbol / unitycli/referencesByName / unitycli/renameByNamePath / unitycli/replaceSymbolBody / unitycli/insertBeforeSymbol / unitycli/insertAfterSymbol / unitycli/removeSymbol
 // This is a lightweight PoC that parses each file independently using Roslyn SyntaxTree.
@@ -763,62 +764,22 @@ sealed class LspServer
     }
 
     private static string DiffPreview(string oldText, string newText)
-    {
-        // Minimal diff: return new text truncated
-        if (newText.Length > 1000) return newText.Substring(0, 1000) + "…";
-        return newText;
-    }
+        => LspEditResultFactory.DiffPreview(oldText, newText);
 
     private static string NormalizeRelative(string relative)
-    {
-        return (relative ?? string.Empty).Replace('\\', '/');
-    }
+        => LspPathUtilities.NormalizeRelative(relative);
 
     private static string MaybeFormatText(string text, bool format)
-    {
-        if (!format) return text;
-        var tree = CSharpSyntaxTree.ParseText(text);
-        return tree.GetRoot().NormalizeWhitespace().ToFullString();
-    }
+        => LspEditResultFactory.MaybeFormatText(text, format);
 
     private static List<Dictionary<string, object?>> CollectSyntaxDiagnostics(string text)
-    {
-        var tree = CSharpSyntaxTree.ParseText(text ?? string.Empty);
-        var diagnostics = new List<Dictionary<string, object?>>();
-        foreach (var diag in tree.GetDiagnostics())
-        {
-            var span = diag.Location.GetLineSpan();
-            diagnostics.Add(new Dictionary<string, object?>
-            {
-                ["severity"] = diag.Severity.ToString().ToLowerInvariant(),
-                ["id"] = diag.Id,
-                ["message"] = diag.GetMessage(),
-                ["line"] = span.StartLinePosition.Line + 1,
-                ["column"] = span.StartLinePosition.Character + 1
-            });
-        }
-        return diagnostics;
-    }
+        => LspEditResultFactory.CollectSyntaxDiagnostics(text);
 
     private static bool HasErrorDiagnostics(IEnumerable<Dictionary<string, object?>> diagnostics)
-    {
-        return diagnostics.Any(diag =>
-        {
-            diag.TryGetValue("severity", out var severity);
-            return string.Equals(severity?.ToString(), "error", StringComparison.OrdinalIgnoreCase);
-        });
-    }
+        => LspEditResultFactory.HasErrorDiagnostics(diagnostics);
 
     private static object[] BuildDiffPreviewEntries(IEnumerable<(string path, string originalText, string newText)> changes)
-    {
-        return changes
-            .Select(change => (object)new Dictionary<string, object?>
-            {
-                ["path"] = NormalizeRelative(change.path),
-                ["preview"] = DiffPreview(change.originalText, change.newText)
-            })
-            .ToArray();
-    }
+        => LspEditResultFactory.BuildDiffPreviewEntries(changes);
 
     private static Dictionary<string, object?> EditResult(
         bool success,
@@ -828,18 +789,7 @@ sealed class LspServer
         IEnumerable<object>? diagnostics = null,
         IEnumerable<object>? diffPreview = null,
         string? reason = null)
-    {
-        return new Dictionary<string, object?>
-        {
-            ["success"] = success,
-            ["applied"] = applied,
-            ["changedFiles"] = (changedFiles ?? Array.Empty<string>()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
-            ["changedSymbols"] = (changedSymbols ?? Array.Empty<string>()).Distinct(StringComparer.Ordinal).ToArray(),
-            ["diagnostics"] = (diagnostics ?? Array.Empty<object>()).ToArray(),
-            ["diffPreview"] = (diffPreview ?? Array.Empty<object>()).ToArray(),
-            ["reason"] = reason
-        };
-    }
+        => LspEditResultFactory.EditResult(success, applied, changedFiles, changedSymbols, diagnostics, diffPreview, reason);
 
     private async Task<object> ValidateTextEditsAsync(string relative, string newText)
     {
@@ -1482,98 +1432,30 @@ sealed class LspServer
     }
 
     private static IEnumerable<string> EnumerateUnityCsFiles(string rootDir)
-    {
-        IEnumerable<string> EnumDir(string dir)
-        {
-            if (!Directory.Exists(dir)) yield break;
-            foreach (var f in Directory.EnumerateFiles(dir, "*.cs", SearchOption.AllDirectories))
-            {
-                var norm = f.Replace('\\','/');
-                if (norm.Contains("/obj/") || norm.Contains("/bin/")) continue;
-                yield return f;
-            }
-        }
-        foreach (var f in EnumDir(Path.Combine(rootDir, "Assets"))) yield return f;
-        foreach (var f in EnumDir(Path.Combine(rootDir, "Packages"))) yield return f;
-        foreach (var f in EnumDir(Path.Combine(rootDir, "Library", "PackageCache"))) yield return f;
-    }
+        => LspWorkspaceUtilities.EnumerateUnityCsFiles(rootDir);
 
     private static string Path2Uri(string path)
-    {
-        return "file://" + path.Replace('\\','/');
-    }
+        => LspPathUtilities.Path2Uri(path);
 
     private static string ToRel(string fullPath, string root)
-    {
-        var normFull = fullPath.Replace('\\', '/');
-        var normRoot = root.Replace('\\', '/').TrimEnd('/');
-        if (normFull.StartsWith(normRoot, StringComparison.OrdinalIgnoreCase))
-            return normFull.Substring(normRoot.Length + 1);
-        return normFull;
-    }
+        => LspPathUtilities.ToRel(fullPath, root);
 
     private static string NormalizeNamePath(string raw)
-    {
-        return string.Join(
-            '/',
-            (raw ?? string.Empty)
-                .Replace('.', '/')
-                .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-        );
-    }
+        => LspPathUtilities.NormalizeNamePath(raw);
 
     private static string? ContainerPath(string namePath)
-    {
-        var segments = NormalizeNamePath(namePath)
-            .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (segments.Length <= 1) return null;
-        return string.Join('/', segments.Take(segments.Length - 1));
-    }
+        => LspPathUtilities.ContainerPath(namePath);
 
     private static string? ContainerName(string namePath)
-    {
-        var containerPath = ContainerPath(namePath);
-        if (string.IsNullOrEmpty(containerPath)) return null;
-        return containerPath.Split('/').LastOrDefault();
-    }
+        => LspPathUtilities.ContainerName(namePath);
 
     private static int SymbolKindCode(string kind) => kind switch
-    {
-        "namespace" => 3,
-        "class" => 5,
-        "method" => 6,
-        "constructor" => 9,
-        "property" => 7,
-        "field" => 8,
-        "enum" => 10,
-        "interface" => 11,
-        "struct" => 23,
-        _ => 0
-    };
+        => LspCodeIndexModels.SymbolKindCode(kind);
 
-    private List<CodeIndexEntry> CollectEntries(SyntaxNode root, string relativePath)
-    {
-        var entries = new List<CodeIndexEntry>();
-        CollectSymbols(root, new Stack<string>(), entries, relativePath);
-        return entries;
-    }
+    private List<UnityCli.Lsp.Core.CodeIndexEntry> CollectEntries(SyntaxNode root, string relativePath) =>
+        new LspSymbolCollector().CollectEntries(root, relativePath);
 
-    private static object MakeSym(CodeIndexEntry entry)
-    {
-        var start = new { line = Math.Max(entry.Line - 1, 0), character = Math.Max(entry.Column - 1, 0) };
-        var end = start;
-        return new
-        {
-            name = entry.Name,
-            kind = SymbolKindCode(entry.Kind),
-            kindName = entry.Kind,
-            namePath = NormalizeNamePath(entry.NamePath),
-            container = ContainerName(entry.NamePath),
-            containerPath = ContainerPath(entry.NamePath),
-            range = new { start, end },
-            selectionRange = new { start, end }
-        };
-    }
+    private static object MakeSym(UnityCli.Lsp.Core.CodeIndexEntry entry) => LspCodeIndexModels.MakeSym(entry);
 
     private async Task<object> BuildCodeIndexAsync(string? outputPath)
     {
@@ -1584,7 +1466,7 @@ sealed class LspServer
                 return new { success = false, error = "root_directory_not_initialized" };
             }
 
-            var entries = new List<CodeIndexEntry>();
+            var entries = new List<UnityCli.Lsp.Core.CodeIndexEntry>();
             foreach (var file in EnumerateUnityCsFiles(_rootDir))
             {
                 try
@@ -1594,11 +1476,11 @@ sealed class LspServer
                     var root = await tree.GetRootAsync();
                     var scope = new Stack<string>();
                     var relative = ToRel(file, _rootDir);
-                    CollectSymbols(root, scope, entries, relative);
+                    new LspSymbolCollector().CollectSymbols(root, scope, entries, relative);
                 }
                 catch (Exception ex)
                 {
-                    entries.Add(new CodeIndexEntry
+                    entries.Add(new UnityCli.Lsp.Core.CodeIndexEntry
                     {
                         Name = Path.GetFileName(file),
                         Kind = "file_error",
@@ -1614,7 +1496,7 @@ sealed class LspServer
             var target = ResolveIndexOutputPath(outputPath);
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
 
-            var payload = new CodeIndexDocument
+            var payload = new UnityCli.Lsp.Core.CodeIndexDocument
             {
                 GeneratedAt = DateTime.UtcNow.ToString("o"),
                 Root = _rootDir.Replace('\\', '/'),
@@ -1642,106 +1524,11 @@ sealed class LspServer
         }
     }
 
-    private void CollectSymbols(SyntaxNode node, Stack<string> scope, List<CodeIndexEntry> output, string relativePath)
-    {
-        switch (node)
-        {
-            case FileScopedNamespaceDeclarationSyntax fileNs:
-                foreach (var member in fileNs.Members)
-                {
-                    CollectSymbols(member, scope, output, relativePath);
-                }
-                break;
-            case NamespaceDeclarationSyntax ns:
-                foreach (var member in ns.Members)
-                {
-                    CollectSymbols(member, scope, output, relativePath);
-                }
-                break;
-            case ClassDeclarationSyntax cls:
-                AddEntry(cls.Identifier.ValueText, "class", cls, scope, output, relativePath);
-                scope.Push(cls.Identifier.ValueText);
-                foreach (var member in cls.Members)
-                {
-                    CollectSymbols(member, scope, output, relativePath);
-                }
-                scope.Pop();
-                break;
-            case StructDeclarationSyntax st:
-                AddEntry(st.Identifier.ValueText, "struct", st, scope, output, relativePath);
-                scope.Push(st.Identifier.ValueText);
-                foreach (var member in st.Members)
-                {
-                    CollectSymbols(member, scope, output, relativePath);
-                }
-                scope.Pop();
-                break;
-            case InterfaceDeclarationSyntax iface:
-                AddEntry(iface.Identifier.ValueText, "interface", iface, scope, output, relativePath);
-                scope.Push(iface.Identifier.ValueText);
-                foreach (var member in iface.Members)
-                {
-                    CollectSymbols(member, scope, output, relativePath);
-                }
-                scope.Pop();
-                break;
-            case EnumDeclarationSyntax en:
-                AddEntry(en.Identifier.ValueText, "enum", en, scope, output, relativePath);
-                foreach (var member in en.Members)
-                {
-                    AddEntry(member.Identifier.ValueText, "enumMember", member, scope, output, relativePath);
-                }
-                break;
-            case MethodDeclarationSyntax method:
-                AddEntry(method.Identifier.ValueText, "method", method, scope, output, relativePath);
-                break;
-            case ConstructorDeclarationSyntax ctor:
-                AddEntry(ctor.Identifier.ValueText, "constructor", ctor, scope, output, relativePath);
-                break;
-            case PropertyDeclarationSyntax prop:
-                AddEntry(prop.Identifier.ValueText, "property", prop, scope, output, relativePath);
-                break;
-            case EventDeclarationSyntax ev:
-                AddEntry(ev.Identifier.ValueText, "event", ev, scope, output, relativePath);
-                break;
-            case EventFieldDeclarationSyntax ef:
-                foreach (var variable in ef.Declaration.Variables)
-                {
-                    AddEntry(variable.Identifier.ValueText, "event", variable, scope, output, relativePath);
-                }
-                break;
-            case FieldDeclarationSyntax field:
-                foreach (var variable in field.Declaration.Variables)
-                {
-                    AddEntry(variable.Identifier.ValueText, "field", variable, scope, output, relativePath);
-                }
-                break;
-            case DelegateDeclarationSyntax del:
-                AddEntry(del.Identifier.ValueText, "delegate", del, scope, output, relativePath);
-                break;
-        }
+    private void CollectSymbols(SyntaxNode node, Stack<string> scope, List<UnityCli.Lsp.Core.CodeIndexEntry> output, string relativePath) =>
+        new LspSymbolCollector().CollectSymbols(node, scope, output, relativePath);
 
-    }
-
-    private void AddEntry(string name, string kind, SyntaxNode node, Stack<string> scope, List<CodeIndexEntry> output, string relativePath)
-    {
-        if (string.IsNullOrWhiteSpace(name)) return;
-
-        var span = node.GetLocation().GetLineSpan();
-        var line = span.StartLinePosition.Line + 1;
-        var column = span.StartLinePosition.Character + 1;
-        var namePath = NormalizeNamePath(string.Join('/', scope.Reverse().Append(name)));
-
-        output.Add(new CodeIndexEntry
-        {
-            Name = name,
-            Kind = kind,
-            NamePath = namePath,
-            File = relativePath.Replace('\\', '/'),
-            Line = line,
-            Column = column
-        });
-    }
+    private void AddEntry(string name, string kind, SyntaxNode node, Stack<string> scope, List<UnityCli.Lsp.Core.CodeIndexEntry> output, string relativePath) =>
+        LspCodeIndexModels.AddEntry(name, kind, node, scope, output, relativePath);
 
     private string ResolveIndexOutputPath(string? outputPath)
     {

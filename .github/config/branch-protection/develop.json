@@ -8,6 +8,8 @@
       { "context": "Markdown & Commitlint" },
       { "context": "Rust Tests (required)" },
       { "context": "LSP Tests (required)" },
+      { "context": "Rust Coverage >= 90% (required)" },
+      { "context": "LSP Coverage >= 90% (required)" },
       { "context": "Verify specs/specs.md is up-to-date" }
     ]
   },
