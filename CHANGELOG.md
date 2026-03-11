@@ -1,3 +1,13 @@
+## [0.4.0] - 2026-03-11
+
+### 🚀 Features
+
+- *(auto-update)* Add managed daemon auto-update
+
+### 📚 Documentation
+
+- *(skills)* Align unity skills with Anthropic guidance
+
 ## [0.3.0] - 2026-03-10
 
 ### 🚀 Features
