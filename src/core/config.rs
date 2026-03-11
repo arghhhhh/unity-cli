@@ -264,6 +264,8 @@ mod tests {
         ));
         std::env::set_var("UNITY_CLI_REGISTRY_PATH", &registry_path);
         let _ = std::fs::remove_file(&registry_path);
+        std::fs::write(&registry_path, "{\n  \"entries\": []\n}\n")
+            .expect("registry fixture should be initialized");
 
         let context = ExecutionContext::from_overrides(&RuntimeOverrides::default())
             .expect("context should resolve");

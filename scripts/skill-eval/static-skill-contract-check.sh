@@ -103,6 +103,18 @@ contracts = {
         "allowed": ["action", "assetPath", "filter", "folderPath", "fromPath", "toPath", "searchInFolders"],
     },
     "refresh_assets": {"required": [], "allowed": []},
+    "create_animator_controller": {
+        "required": ["controllerPath"],
+        "allowed": ["controllerPath", "overwrite", "parameters", "states", "defaultState", "transitions"],
+    },
+    "create_animation_clip": {
+        "required": ["clipPath", "spritePaths"],
+        "allowed": ["clipPath", "spritePaths", "frameRate", "loopTime", "bindingPath", "overwrite"],
+    },
+    "create_sprite_atlas": {
+        "required": ["atlasPath"],
+        "allowed": ["atlasPath", "overwrite", "packables", "packingSettings", "textureSettings"],
+    },
     "create_material": {
         "required": ["materialPath"],
         "allowed": ["materialPath", "shader", "properties", "copyFrom", "overwrite"],

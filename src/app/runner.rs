@@ -792,6 +792,137 @@ mod tests {
     }
 
     #[test]
+    fn validate_tool_params_accepts_create_animator_controller_payload() {
+        validate_tool_params(
+            "create_animator_controller",
+            &json!({
+                "controllerPath": "Assets/Animations/Hero.controller",
+                "parameters": [
+                    {
+                        "name": "isMoving",
+                        "type": "Bool",
+                        "defaultBool": false
+                    }
+                ],
+                "states": [
+                    {
+                        "name": "Idle",
+                        "motionPath": "Assets/Animations/Hero/Idle.anim"
+                    },
+                    {
+                        "name": "Run"
+                    }
+                ],
+                "defaultState": "Idle",
+                "transitions": [
+                    {
+                        "from": "Idle",
+                        "to": "Run",
+                        "conditions": [
+                            {
+                                "parameter": "isMoving",
+                                "mode": "If"
+                            }
+                        ]
+                    }
+                ]
+            }),
+        )
+        .expect("create_animator_controller payload should pass");
+    }
+
+    #[test]
+    fn validate_tool_params_rejects_invalid_animator_condition_mode() {
+        let err = validate_tool_params(
+            "create_animator_controller",
+            &json!({
+                "controllerPath": "Assets/Animations/Hero.controller",
+                "transitions": [
+                    {
+                        "from": "Idle",
+                        "to": "Run",
+                        "conditions": [
+                            {
+                                "parameter": "isMoving",
+                                "mode": "Always"
+                            }
+                        ]
+                    }
+                ]
+            }),
+        )
+        .expect_err("invalid animator condition mode should fail");
+        assert!(format!("{err:#}").contains("$.transitions[0].conditions[0].mode"));
+    }
+
+    #[test]
+    fn validate_tool_params_accepts_create_animation_clip_payload() {
+        validate_tool_params(
+            "create_animation_clip",
+            &json!({
+                "clipPath": "Assets/Animations/Hero.anim",
+                "spritePaths": [
+                    "Assets/Sprites/Hero/idle_0.png",
+                    "Assets/Sprites/Hero/idle_1.png"
+                ],
+                "frameRate": 12.0,
+                "loopTime": true,
+                "bindingPath": "Root/Hero"
+            }),
+        )
+        .expect("create_animation_clip payload should pass");
+    }
+
+    #[test]
+    fn validate_tool_params_rejects_create_animation_clip_without_sprite_paths() {
+        let err = validate_tool_params(
+            "create_animation_clip",
+            &json!({
+                "clipPath": "Assets/Animations/Hero.anim"
+            }),
+        )
+        .expect_err("missing spritePaths should fail");
+        assert!(format!("{err:#}").contains("$.spritePaths is required"));
+    }
+
+    #[test]
+    fn validate_tool_params_accepts_create_sprite_atlas_payload() {
+        validate_tool_params(
+            "create_sprite_atlas",
+            &json!({
+                "atlasPath": "Assets/Atlases/UI.spriteatlas",
+                "overwrite": true,
+                "packables": ["Assets/Sprites/UI"],
+                "packingSettings": {
+                    "padding": 8,
+                    "allowRotation": false,
+                    "tightPacking": true
+                },
+                "textureSettings": {
+                    "filterMode": "Bilinear",
+                    "generateMipMaps": false
+                }
+            }),
+        )
+        .expect("create_sprite_atlas payload should pass");
+    }
+
+    #[test]
+    fn validate_tool_params_rejects_invalid_sprite_atlas_filter_mode() {
+        let err = validate_tool_params(
+            "create_sprite_atlas",
+            &json!({
+                "atlasPath": "Assets/Atlases/UI.spriteatlas",
+                "textureSettings": {
+                    "filterMode": "Nearest"
+                }
+            }),
+        )
+        .expect_err("invalid sprite atlas filter mode should fail");
+        assert!(format!("{err:#}").contains("$.textureSettings.filterMode"));
+    }
+
+    #[test]
     fn validate_tool_params_accepts_lsp_write_payload_with_path_alias() {
         validate_tool_params(
             "rename_symbol",
@@ -1584,6 +1715,8 @@ mod tests {
             .unwrap_or_else(|poison| poison.into_inner());
         let registry = tempdir().expect("tempdir should succeed");
         let registry_path = registry.path().join("instances.json");
+        std::fs::write(&registry_path, "{\n  \"entries\": []\n}\n")
+            .expect("registry fixture should be initialized");
         let _registry_env = EnvVarGuard::set(
             "UNITY_CLI_REGISTRY_PATH",
             registry_path
