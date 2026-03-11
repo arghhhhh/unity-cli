@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using UnityEngine;
 using UnityEditor;
+using UnityEditor.Animations;
 using UnityCliBridge.Logging;
 using Newtonsoft.Json.Linq;
 
@@ -469,7 +470,554 @@ namespace UnityCliBridge.Handlers
             }
         }
 
+        /// <summary>
+        /// Creates or overwrites an AnimatorController asset with parameters, states, and transitions.
+        /// </summary>
+        public static object CreateAnimatorController(JObject parameters)
+        {
+            try
+            {
+                string controllerPath = parameters["controllerPath"]?.ToString();
+                bool overwrite = parameters["overwrite"]?.ToObject<bool>() ?? false;
+
+                var validationErrors = ValidateAnimatorControllerRequest(parameters, controllerPath, overwrite);
+                if (validationErrors.Count > 0)
+                {
+                    return new
+                    {
+                        error = "AnimatorController request validation failed",
+                        validationErrors = validationErrors.ToArray()
+                    };
+                }
+
+                EnsureAssetDirectoryExists(controllerPath);
+
+                AnimatorController controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(controllerPath);
+                bool existed = controller != null;
+
+                if (controller == null)
+                {
+                    controller = AnimatorController.CreateAnimatorControllerAtPath(controllerPath);
+                    if (controller != null)
+                    {
+                        ResetAnimatorController(controller);
+                    }
+                }
+                else
+                {
+                    ResetAnimatorController(controller);
+                }
+
+                if (controller == null)
+                {
+                    return new { error = $"Failed to create AnimatorController at {controllerPath}" };
+                }
+
+                AnimatorStateMachine stateMachine = GetOrCreateBaseLayerStateMachine(controller);
+                var parameterDefinitions = parameters["parameters"] as JArray ?? new JArray();
+                var stateDefinitions = parameters["states"] as JArray ?? new JArray();
+                var transitionDefinitions = parameters["transitions"] as JArray ?? new JArray();
+
+                foreach (JObject parameter in parameterDefinitions.OfType<JObject>())
+                {
+                    controller.AddParameter(BuildAnimatorParameter(parameter));
+                }
+
+                var statesByName = new Dictionary<string, AnimatorState>(StringComparer.Ordinal);
+                string firstStateName = null;
+
+                foreach (JObject stateDefinition in stateDefinitions.OfType<JObject>())
+                {
+                    string stateName = stateDefinition["name"]?.ToString();
+                    Motion motion = null;
+                    string motionPath = stateDefinition["motionPath"]?.ToString();
+
+                    if (!string.IsNullOrEmpty(motionPath))
+                    {
+                        motion = AssetDatabase.LoadAssetAtPath<Motion>(motionPath);
+                    }
+
+                    AnimatorState state = stateMachine.AddState(stateName);
+                    state.motion = motion;
+                    statesByName[stateName] = state;
+                    if (firstStateName == null)
+                    {
+                        firstStateName = stateName;
+                    }
+                }
+
+                string defaultStateName = parameters["defaultState"]?.ToString();
+                if (string.IsNullOrEmpty(defaultStateName))
+                {
+                    defaultStateName = firstStateName;
+                }
+
+                if (!string.IsNullOrEmpty(defaultStateName))
+                {
+                    stateMachine.defaultState = statesByName[defaultStateName];
+                }
+
+                int transitionCount = 0;
+
+                foreach (JObject transitionDefinition in transitionDefinitions.OfType<JObject>())
+                {
+                    AnimatorState fromState = statesByName[transitionDefinition["from"]?.ToString()];
+                    AnimatorState toState = statesByName[transitionDefinition["to"]?.ToString()];
+                    AnimatorStateTransition transition = fromState.AddTransition(toState);
+
+                    if (transitionDefinition["hasExitTime"] != null)
+                    {
+                        transition.hasExitTime = transitionDefinition["hasExitTime"].ToObject<bool>();
+                    }
+
+                    if (transitionDefinition["exitTime"] != null)
+                    {
+                        transition.hasExitTime = true;
+                        transition.exitTime = transitionDefinition["exitTime"].ToObject<float>();
+                    }
+
+                    if (transitionDefinition["duration"] != null)
+                    {
+                        transition.duration = transitionDefinition["duration"].ToObject<float>();
+                    }
+
+                    var conditions = transitionDefinition["conditions"] as JArray;
+                    if (conditions != null)
+                    {
+                        foreach (JObject condition in conditions.OfType<JObject>())
+                        {
+                            transition.AddCondition(
+                                ParseAnimatorConditionMode(condition["mode"]?.ToString()),
+                                condition["threshold"] != null ? condition["threshold"].ToObject<float>() : 0f,
+                                condition["parameter"]?.ToString()
+                            );
+                        }
+                    }
+
+                    transitionCount++;
+                }
+
+                EditorUtility.SetDirty(stateMachine);
+                EditorUtility.SetDirty(controller);
+                AssetDatabase.SaveAssets();
+
+                return new
+                {
+                    success = true,
+                    controllerPath = controllerPath,
+                    guid = AssetDatabase.AssetPathToGUID(controllerPath),
+                    defaultState = defaultStateName,
+                    parameterCount = controller.parameters.Length,
+                    stateCount = statesByName.Count,
+                    transitionCount = transitionCount,
+                    message = existed ? "AnimatorController overwritten successfully" : "AnimatorController created successfully"
+                };
+            }
+            catch (Exception e)
+            {
+                BridgeLogger.LogError("AssetManagementHandler", $"Error in CreateAnimatorController: {e.Message}");
+                return new { error = $"Failed to create AnimatorController: {e.Message}" };
+            }
+        }
+
         #region Helper Methods
+
+        private static List<string> ValidateAnimatorControllerRequest(JObject parameters, string controllerPath, bool overwrite)
+        {
+            var errors = new List<string>();
+
+            if (string.IsNullOrEmpty(controllerPath))
+            {
+                errors.Add("controllerPath is required");
+                return errors;
+            }
+
+            if (!controllerPath.StartsWith("Assets/") || !controllerPath.EndsWith(".controller"))
+            {
+                errors.Add("controllerPath must start with Assets/ and end with .controller");
+            }
+
+            UnityEngine.Object existingAsset = AssetDatabase.LoadMainAssetAtPath(controllerPath);
+            AnimatorController existingController = AssetDatabase.LoadAssetAtPath<AnimatorController>(controllerPath);
+            if (existingAsset != null && existingController == null)
+            {
+                errors.Add($"Asset already exists at {controllerPath} and is not an AnimatorController");
+            }
+            else if (existingController != null && !overwrite)
+            {
+                errors.Add($"AnimatorController already exists at {controllerPath}. Set overwrite to true to replace it.");
+            }
+
+            JArray parameterDefinitions = ExpectArray(parameters["parameters"], "parameters", errors);
+            JArray stateDefinitions = ExpectArray(parameters["states"], "states", errors);
+            JArray transitionDefinitions = ExpectArray(parameters["transitions"], "transitions", errors);
+
+            var parameterNames = new HashSet<string>(StringComparer.Ordinal);
+            if (parameterDefinitions != null)
+            {
+                for (int i = 0; i < parameterDefinitions.Count; i++)
+                {
+                    JObject parameter = parameterDefinitions[i] as JObject;
+                    if (parameter == null)
+                    {
+                        errors.Add($"parameters[{i}] must be an object");
+                        continue;
+                    }
+
+                    string name = parameter["name"]?.ToString();
+                    if (string.IsNullOrWhiteSpace(name))
+                    {
+                        errors.Add($"parameters[{i}].name is required");
+                    }
+                    else if (!parameterNames.Add(name))
+                    {
+                        errors.Add($"Duplicate parameter name: {name}");
+                    }
+
+                    string typeName = parameter["type"]?.ToString();
+                    if (!TryParseAnimatorParameterType(typeName, out _))
+                    {
+                        errors.Add($"parameters[{i}].type must be one of Bool, Float, Int, Trigger");
+                    }
+
+                    ValidateNumericToken(parameter["defaultFloat"], $"parameters[{i}].defaultFloat", errors);
+                    ValidateIntegerToken(parameter["defaultInt"], $"parameters[{i}].defaultInt", errors);
+                }
+            }
+
+            var stateNames = new HashSet<string>(StringComparer.Ordinal);
+            if (stateDefinitions != null)
+            {
+                for (int i = 0; i < stateDefinitions.Count; i++)
+                {
+                    JObject state = stateDefinitions[i] as JObject;
+                    if (state == null)
+                    {
+                        errors.Add($"states[{i}] must be an object");
+                        continue;
+                    }
+
+                    string name = state["name"]?.ToString();
+                    if (string.IsNullOrWhiteSpace(name))
+                    {
+                        errors.Add($"states[{i}].name is required");
+                    }
+                    else if (!stateNames.Add(name))
+                    {
+                        errors.Add($"Duplicate state name: {name}");
+                    }
+
+                    string motionPath = state["motionPath"]?.ToString();
+                    if (!string.IsNullOrEmpty(motionPath))
+                    {
+                        if (!motionPath.StartsWith("Assets/"))
+                        {
+                            errors.Add($"states[{i}].motionPath must start with Assets/: {motionPath}");
+                        }
+                        else if (AssetDatabase.LoadAssetAtPath<Motion>(motionPath) == null)
+                        {
+                            errors.Add($"states[{i}].motionPath does not point to a Motion asset: {motionPath}");
+                        }
+                    }
+                }
+            }
+
+            string defaultStateName = parameters["defaultState"]?.ToString();
+            if (!string.IsNullOrEmpty(defaultStateName) && !stateNames.Contains(defaultStateName))
+            {
+                errors.Add($"defaultState references unknown state: {defaultStateName}");
+            }
+
+            if (transitionDefinitions != null)
+            {
+                for (int i = 0; i < transitionDefinitions.Count; i++)
+                {
+                    JObject transition = transitionDefinitions[i] as JObject;
+                    if (transition == null)
+                    {
+                        errors.Add($"transitions[{i}] must be an object");
+                        continue;
+                    }
+
+                    string fromState = transition["from"]?.ToString();
+                    string toState = transition["to"]?.ToString();
+
+                    if (string.IsNullOrWhiteSpace(fromState))
+                    {
+                        errors.Add($"transitions[{i}].from is required");
+                    }
+                    else if (!stateNames.Contains(fromState))
+                    {
+                        errors.Add($"transitions[{i}].from references unknown state: {fromState}");
+                    }
+
+                    if (string.IsNullOrWhiteSpace(toState))
+                    {
+                        errors.Add($"transitions[{i}].to is required");
+                    }
+                    else if (!stateNames.Contains(toState))
+                    {
+                        errors.Add($"transitions[{i}].to references unknown state: {toState}");
+                    }
+
+                    ValidateNumericToken(transition["duration"], $"transitions[{i}].duration", errors);
+                    ValidateNumericToken(transition["exitTime"], $"transitions[{i}].exitTime", errors);
+
+                    JArray conditions = ExpectArray(transition["conditions"], $"transitions[{i}].conditions", errors);
+                    if (conditions == null)
+                    {
+                        continue;
+                    }
+
+                    for (int j = 0; j < conditions.Count; j++)
+                    {
+                        JObject condition = conditions[j] as JObject;
+                        if (condition == null)
+                        {
+                            errors.Add($"transitions[{i}].conditions[{j}] must be an object");
+                            continue;
+                        }
+
+                        string parameterName = condition["parameter"]?.ToString();
+                        if (string.IsNullOrWhiteSpace(parameterName))
+                        {
+                            errors.Add($"transitions[{i}].conditions[{j}].parameter is required");
+                        }
+                        else if (!parameterNames.Contains(parameterName))
+                        {
+                            errors.Add($"transitions[{i}].conditions[{j}] references unknown parameter: {parameterName}");
+                        }
+
+                        string modeName = condition["mode"]?.ToString();
+                        if (!TryParseAnimatorConditionMode(modeName, out _))
+                        {
+                            errors.Add($"transitions[{i}].conditions[{j}].mode must be one of If, IfNot, Greater, Less, Equals, NotEqual");
+                        }
+
+                        ValidateNumericToken(condition["threshold"], $"transitions[{i}].conditions[{j}].threshold", errors);
+                    }
+                }
+            }
+
+            return errors;
+        }
+
+        private static JArray ExpectArray(JToken token, string fieldName, List<string> errors)
+        {
+            if (token == null)
+            {
+                return null;
+            }
+
+            JArray array = token as JArray;
+            if (array == null)
+            {
+                errors.Add($"{fieldName} must be an array");
+            }
+
+            return array;
+        }
+
+        private static void ValidateNumericToken(JToken token, string fieldName, List<string> errors)
+        {
+            if (token == null)
+            {
+                return;
+            }
+
+            if (token.Type != JTokenType.Integer && token.Type != JTokenType.Float)
+            {
+                errors.Add($"{fieldName} must be a number");
+            }
+        }
+
+        private static void ValidateIntegerToken(JToken token, string fieldName, List<string> errors)
+        {
+            if (token == null)
+            {
+                return;
+            }
+
+            if (token.Type != JTokenType.Integer)
+            {
+                errors.Add($"{fieldName} must be an integer");
+            }
+        }
+
+        private static void EnsureAssetDirectoryExists(string assetPath)
+        {
+            string directory = Path.GetDirectoryName(assetPath);
+            if (string.IsNullOrEmpty(directory) || AssetDatabase.IsValidFolder(directory))
+            {
+                return;
+            }
+
+            Directory.CreateDirectory(directory);
+            AssetDatabase.Refresh();
+            UnityCliBridge.Helpers.DebouncedAssetRefresh.Request();
+        }
+
+        private static AnimatorControllerParameter BuildAnimatorParameter(JObject parameter)
+        {
+            var animatorParameter = new AnimatorControllerParameter
+            {
+                name = parameter["name"]?.ToString(),
+                type = ParseAnimatorParameterType(parameter["type"]?.ToString())
+            };
+
+            switch (animatorParameter.type)
+            {
+                case AnimatorControllerParameterType.Bool:
+                    animatorParameter.defaultBool = parameter["defaultBool"]?.ToObject<bool>() ?? false;
+                    break;
+                case AnimatorControllerParameterType.Float:
+                    animatorParameter.defaultFloat = parameter["defaultFloat"]?.ToObject<float>() ?? 0f;
+                    break;
+                case AnimatorControllerParameterType.Int:
+                    animatorParameter.defaultInt = parameter["defaultInt"]?.ToObject<int>() ?? 0;
+                    break;
+            }
+
+            return animatorParameter;
+        }
+
+        private static bool TryParseAnimatorParameterType(string typeName, out AnimatorControllerParameterType type)
+        {
+            switch (typeName)
+            {
+                case "Bool":
+                    type = AnimatorControllerParameterType.Bool;
+                    return true;
+                case "Float":
+                    type = AnimatorControllerParameterType.Float;
+                    return true;
+                case "Int":
+                    type = AnimatorControllerParameterType.Int;
+                    return true;
+                case "Trigger":
+                    type = AnimatorControllerParameterType.Trigger;
+                    return true;
+                default:
+                    type = AnimatorControllerParameterType.Float;
+                    return false;
+            }
+        }
+
+        private static AnimatorControllerParameterType ParseAnimatorParameterType(string typeName)
+        {
+            AnimatorControllerParameterType type;
+            return TryParseAnimatorParameterType(typeName, out type) ? type : AnimatorControllerParameterType.Float;
+        }
+
+        private static bool TryParseAnimatorConditionMode(string modeName, out AnimatorConditionMode mode)
+        {
+            switch (modeName)
+            {
+                case "If":
+                    mode = AnimatorConditionMode.If;
+                    return true;
+                case "IfNot":
+                    mode = AnimatorConditionMode.IfNot;
+                    return true;
+                case "Greater":
+                    mode = AnimatorConditionMode.Greater;
+                    return true;
+                case "Less":
+                    mode = AnimatorConditionMode.Less;
+                    return true;
+                case "Equals":
+                    mode = AnimatorConditionMode.Equals;
+                    return true;
+                case "NotEqual":
+                    mode = AnimatorConditionMode.NotEqual;
+                    return true;
+                default:
+                    mode = AnimatorConditionMode.If;
+                    return false;
+            }
+        }
+
+        private static AnimatorConditionMode ParseAnimatorConditionMode(string modeName)
+        {
+            AnimatorConditionMode mode;
+            return TryParseAnimatorConditionMode(modeName, out mode) ? mode : AnimatorConditionMode.If;
+        }
+
+        private static void ResetAnimatorController(AnimatorController controller)
+        {
+            for (int i = controller.parameters.Length - 1; i >= 0; i--)
+            {
+                controller.RemoveParameter(i);
+            }
+
+            for (int i = controller.layers.Length - 1; i > 0; i--)
+            {
+                controller.RemoveLayer(i);
+            }
+
+            ClearStateMachine(GetOrCreateBaseLayerStateMachine(controller));
+        }
+
+        private static AnimatorStateMachine GetOrCreateBaseLayerStateMachine(AnimatorController controller)
+        {
+            if (controller.layers == null || controller.layers.Length == 0)
+            {
+                controller.AddLayer(CreateBaseLayer(controller));
+            }
+
+            AnimatorControllerLayer[] layers = controller.layers;
+            AnimatorControllerLayer baseLayer = layers[0];
+            baseLayer.name = "Base Layer";
+            baseLayer.defaultWeight = 1f;
+
+            if (baseLayer.stateMachine == null)
+            {
+                baseLayer.stateMachine = new AnimatorStateMachine { name = "Base Layer" };
+                AssetDatabase.AddObjectToAsset(baseLayer.stateMachine, controller);
+            }
+
+            layers[0] = baseLayer;
+            controller.layers = layers;
+            return controller.layers[0].stateMachine;
+        }
+
+        private static AnimatorControllerLayer CreateBaseLayer(AnimatorController controller)
+        {
+            var stateMachine = new AnimatorStateMachine { name = "Base Layer" };
+            AssetDatabase.AddObjectToAsset(stateMachine, controller);
+
+            return new AnimatorControllerLayer
+            {
+                name = "Base Layer",
+                defaultWeight = 1f,
+                stateMachine = stateMachine
+            };
+        }
+
+        private static void ClearStateMachine(AnimatorStateMachine stateMachine)
+        {
+            foreach (var transition in stateMachine.anyStateTransitions.ToArray())
+            {
+                stateMachine.RemoveAnyStateTransition(transition);
+            }
+
+            foreach (var transition in stateMachine.entryTransitions.ToArray())
+            {
+                stateMachine.RemoveEntryTransition(transition);
+            }
+
+            foreach (var childStateMachine in stateMachine.stateMachines.ToArray())
+            {
+                stateMachine.RemoveStateMachine(childStateMachine.stateMachine);
+            }
+
+            foreach (var childState in stateMachine.states.ToArray())
+            {
+                stateMachine.RemoveState(childState.state);
+            }
+
+            stateMachine.defaultState = null;
+        }
 
         private static bool ApplyMaterialProperty(Material material, string propertyName, JToken value)
         {

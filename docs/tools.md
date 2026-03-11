@@ -71,6 +71,7 @@ Global options:
 
 | Tool | Description |
 | --- | --- |
+| `create_animator_controller` | Create an AnimatorController asset with parameters, states, and transitions |
 | `get_animator_runtime_info` | Get Animator runtime info |
 | `get_animator_state` | Get current Animator state |
 

@@ -792,6 +792,70 @@ mod tests {
     }
 
     #[test]
+    fn validate_tool_params_accepts_create_animator_controller_payload() {
+        validate_tool_params(
+            "create_animator_controller",
+            &json!({
+                "controllerPath": "Assets/Animations/Hero.controller",
+                "parameters": [
+                    {
+                        "name": "isMoving",
+                        "type": "Bool",
+                        "defaultBool": false
+                    }
+                ],
+                "states": [
+                    {
+                        "name": "Idle",
+                        "motionPath": "Assets/Animations/Hero/Idle.anim"
+                    },
+                    {
+                        "name": "Run"
+                    }
+                ],
+                "defaultState": "Idle",
+                "transitions": [
+                    {
+                        "from": "Idle",
+                        "to": "Run",
+                        "conditions": [
+                            {
+                                "parameter": "isMoving",
+                                "mode": "If"
+                            }
+                        ]
+                    }
+                ]
+            }),
+        )
+        .expect("create_animator_controller payload should pass");
+    }
+
+    #[test]
+    fn validate_tool_params_rejects_invalid_animator_condition_mode() {
+        let err = validate_tool_params(
+            "create_animator_controller",
+            &json!({
+                "controllerPath": "Assets/Animations/Hero.controller",
+                "transitions": [
+                    {
+                        "from": "Idle",
+                        "to": "Run",
+                        "conditions": [
+                            {
+                                "parameter": "isMoving",
+                                "mode": "Always"
+                            }
+                        ]
+                    }
+                ]
+            }),
+        )
+        .expect_err("invalid animator condition mode should fail");
+        assert!(format!("{err:#}").contains("$.transitions[0].conditions[0].mode"));
+    }
+
+    #[test]
     fn validate_tool_params_accepts_lsp_write_payload_with_path_alias() {
         validate_tool_params(
             "rename_symbol",

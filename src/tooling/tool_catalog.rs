@@ -7,6 +7,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "addressables_manage",
     "get_animator_runtime_info",
     "get_animator_state",
+    "create_animator_controller",
     "find_by_component",
     "get_component_values",
     "get_gameobject_details",
@@ -175,6 +176,9 @@ fn tool_description(name: &str) -> &'static str {
         "ping" => "Check Unity Editor connectivity",
         "create_scene" => "Create a new scene",
         "list_packages" => "List installed packages",
+        "create_animator_controller" => {
+            "Create an AnimatorController asset with parameters, states, and transitions"
+        }
         "read" => "Read a C# source file",
         "search" => "Search code by pattern",
         "get_symbols" => "Get symbols in a C# source file",
@@ -1079,6 +1083,72 @@ fn tool_params_schema(name: &str) -> Value {
                 ("includeBehaviours", boolean_schema()),
             ],
             &["gameObjectName"],
+            false,
+        ),
+        "create_animator_controller" => object_schema(
+            &[
+                ("controllerPath", string_schema()),
+                ("overwrite", boolean_schema()),
+                (
+                    "parameters",
+                    array_of(object_schema(
+                        &[
+                            ("name", string_schema()),
+                            (
+                                "type",
+                                enum_string_schema(&["Bool", "Float", "Int", "Trigger"]),
+                            ),
+                            ("defaultBool", boolean_schema()),
+                            ("defaultFloat", number_schema()),
+                            ("defaultInt", integer_schema()),
+                        ],
+                        &["name", "type"],
+                        false,
+                    )),
+                ),
+                (
+                    "states",
+                    array_of(object_schema(
+                        &[("name", string_schema()), ("motionPath", string_schema())],
+                        &["name"],
+                        false,
+                    )),
+                ),
+                ("defaultState", string_schema()),
+                (
+                    "transitions",
+                    array_of(object_schema(
+                        &[
+                            ("from", string_schema()),
+                            ("to", string_schema()),
+                            ("hasExitTime", boolean_schema()),
+                            ("exitTime", number_schema()),
+                            ("duration", number_schema()),
+                            (
+                                "conditions",
+                                array_of(object_schema(
+                                    &[
+                                        ("parameter", string_schema()),
+                                        (
+                                            "mode",
+                                            enum_string_schema(&[
+                                                "If", "IfNot", "Greater", "Less", "Equals",
+                                                "NotEqual",
+                                            ]),
+                                        ),
+                                        ("threshold", number_schema()),
+                                    ],
+                                    &["parameter", "mode"],
+                                    false,
+                                )),
+                            ),
+                        ],
+                        &["from", "to"],
+                        false,
+                    )),
+                ),
+            ],
+            &["controllerPath"],
             false,
         ),
         "get_input_actions_state" => with_any_of(
@@ -2193,7 +2263,7 @@ mod tests {
 
     #[test]
     fn tool_catalog_keeps_manifest_parity_count() {
-        assert_eq!(TOOL_NAMES.len(), 115);
+        assert_eq!(TOOL_NAMES.len(), 116);
     }
 
     #[test]
@@ -2342,6 +2412,23 @@ mod tests {
         let spec = get_tool_spec("clear_logs").expect("clear_logs must exist");
         assert_eq!(spec.params_schema["type"], "object");
         assert_eq!(spec.params_schema["additionalProperties"], false);
+    }
+
+    #[test]
+    fn create_animator_controller_schema_is_strict_and_nested() {
+        let spec =
+            get_tool_spec("create_animator_controller").expect("create_animator_controller exists");
+        assert_eq!(spec.params_schema["required"], json!(["controllerPath"]));
+        assert_eq!(spec.params_schema["additionalProperties"], false);
+        assert_eq!(
+            spec.params_schema["properties"]["parameters"]["items"]["properties"]["type"]["enum"],
+            json!(["Bool", "Float", "Int", "Trigger"])
+        );
+        assert_eq!(
+            spec.params_schema["properties"]["transitions"]["items"]["properties"]["conditions"]
+                ["items"]["properties"]["mode"]["enum"],
+            json!(["If", "IfNot", "Greater", "Less", "Equals", "NotEqual"])
+        );
     }
 
     #[test]

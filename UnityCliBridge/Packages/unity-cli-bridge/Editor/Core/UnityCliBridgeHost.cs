@@ -743,6 +743,10 @@ namespace UnityCliBridge.Core
                         break;
                     #endif
                     // Asset Management commands
+                    case "create_animator_controller":
+                        var createAnimatorControllerResult = AssetManagementHandler.CreateAnimatorController(command.Parameters);
+                        response = Response.SuccessResult(command.Id, createAnimatorControllerResult);
+                        break;
                     case "create_prefab":
                         var createPrefabResult = AssetManagementHandler.CreatePrefab(command.Parameters);
                         response = Response.SuccessResult(command.Id, createPrefabResult);
