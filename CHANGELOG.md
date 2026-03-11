@@ -1,3 +1,9 @@
+## [0.4.1] - 2026-03-11
+
+### 🐛 Bug Fixes
+
+- *(ci)* Align unity-cli artifact names with detect_rid() convention
+
 ## [0.4.0] - 2026-03-11
 
 ### 🚀 Features
