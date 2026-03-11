@@ -743,6 +743,18 @@ namespace UnityCliBridge.Core
                         break;
                     #endif
                     // Asset Management commands
+                    case "create_animator_controller":
+                        var createAnimatorControllerResult = AssetManagementHandler.CreateAnimatorController(command.Parameters);
+                        response = Response.SuccessResult(command.Id, createAnimatorControllerResult);
+                        break;
+                    case "create_animation_clip":
+                        var createAnimationClipResult = AssetManagementHandler.CreateAnimationClip(command.Parameters);
+                        response = Response.SuccessResult(command.Id, createAnimationClipResult);
+                        break;
+                    case "create_sprite_atlas":
+                        var createSpriteAtlasResult = AssetManagementHandler.CreateSpriteAtlas(command.Parameters);
+                        response = Response.SuccessResult(command.Id, createSpriteAtlasResult);
+                        break;
                     case "create_prefab":
                         var createPrefabResult = AssetManagementHandler.CreatePrefab(command.Parameters);
                         response = Response.SuccessResult(command.Id, createPrefabResult);

@@ -168,6 +168,11 @@ namespace UnityCliBridge.Handlers
                             case "textureType":
                                 previousSettings[key] = textureImporter.textureType.ToString();
                                 textureImporter.textureType = (TextureImporterType)Enum.Parse(typeof(TextureImporterType), value.ToString());
+                                if (textureImporter.textureType == TextureImporterType.Sprite)
+                                {
+                                    textureImporter.spriteImportMode = SpriteImportMode.Single;
+                                    appliedSettings["spriteImportMode"] = "Single";
+                                }
                                 appliedSettings[key] = value.ToString();
                                 break;
                             case "filterMode":

@@ -42,6 +42,9 @@ namespace UnityCliBridge.Helpers
             // Block heavy asset DB operations during Play
             if (commandType.Equals("manage_asset_database", StringComparison.OrdinalIgnoreCase)) return false;
             if (commandType.Equals("analyze_asset_dependencies", StringComparison.OrdinalIgnoreCase)) return false;
+            if (commandType.Equals("create_animator_controller", StringComparison.OrdinalIgnoreCase)) return false;
+            if (commandType.Equals("create_animation_clip", StringComparison.OrdinalIgnoreCase)) return false;
+            if (commandType.Equals("create_sprite_atlas", StringComparison.OrdinalIgnoreCase)) return false;
 
             // Block project settings and package manager changes during Play
             if (commandType.Equals("update_project_settings", StringComparison.OrdinalIgnoreCase)) return false;
