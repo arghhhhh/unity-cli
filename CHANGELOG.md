@@ -1,3 +1,9 @@
+## [0.7.3] - 2026-03-11
+
+### 🐛 Bug Fixes
+
+- Improve self-update logging with match expression
+
 ## [0.7.2] - 2026-03-11
 
 ### 🐛 Bug Fixes
