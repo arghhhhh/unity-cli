@@ -133,6 +133,11 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Setup .NET SDK 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+
       - name: Cache cargo registry and build
         uses: actions/cache@v5
         with:
@@ -157,12 +162,20 @@ jobs:
       - name: Build unity-cli
         run: cargo build --release
 
-      - name: Install LSP binary
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: ./target/release/unity-cli lsp install --output json
+      - name: Publish local LSP binary for perf run
+        run: |
+          export UNITY_CLI_TOOLS_ROOT="$PWD/.cache/csharp-lsp"
+          export LSP_INSTALL_DIR="$UNITY_CLI_TOOLS_ROOT/csharp-lsp/linux-x64"
+          mkdir -p "$LSP_INSTALL_DIR"
+          dotnet publish lsp/Server.csproj -c Release -o "$LSP_INSTALL_DIR"
+          cp "$LSP_INSTALL_DIR/Server" "$LSP_INSTALL_DIR/server"
+          chmod +x "$LSP_INSTALL_DIR/server"
+          printf 'local-perf\n' > "$LSP_INSTALL_DIR/VERSION"
 
       - name: Run LSP performance check
+        env:
+          UNITY_CLI_TOOLS_ROOT: ${{ github.workspace }}/.cache/csharp-lsp
+          UNITY_CLI_TEST_SKIP_MANAGED_UPDATE: "1"
         run: |
           mkdir -p artifacts
           ./scripts/lsp-perf-check.sh --unity-cli ./target/release/unity-cli --project-root ./UnityCliBridge --json | tee artifacts/lsp-perf-summary.json
