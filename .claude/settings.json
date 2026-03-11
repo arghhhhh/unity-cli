@@ -1,4 +1,143 @@
 {
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "context7",
+    "google-search",
+    "markitdown",
+    "unity-cli"
+  ],
+  "enabledPlugins": {
+    "code-review@claude-plugins-official": true,
+    "commit-commands@claude-plugins-official": true,
+    "context7@claude-plugins-official": true,
+    "drawio@akiojin-skills": true,
+    "feature-dev@claude-plugins-official": true,
+    "github@akiojin-skills": true,
+    "github@claude-plugins-official": true,
+    "lsp@claude-plugins-official": true,
+    "plugin-dev@claude-plugins-official": true,
+    "pr-review-toolkit@claude-plugins-official": true,
+    "security-guidance@claude-plugins-official": true,
+    "speckit@akiojin-skills": true,
+    "typescript-lsp@claude-plugins-official": true,
+    "unity-cli@unity-cli": true
+  },
+  "hooks": {
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "command": ".claude/hooks/scripts/gwt-forward-hook.sh Notification",
+            "type": "command"
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "command": ".claude/hooks/scripts/gwt-forward-hook.sh PostToolUse",
+            "type": "command"
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "command": "scripts/auto-suggest-claude-md-hook.sh",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": ".claude/hooks/block-cs-edit-tools.sh",
+            "type": "command"
+          }
+        ],
+        "matcher": "Edit"
+      },
+      {
+        "hooks": [
+          {
+            "command": ".claude/hooks/block-cs-edit-tools.sh",
+            "type": "command"
+          }
+        ],
+        "matcher": "Write"
+      },
+      {
+        "hooks": [
+          {
+            "command": ".claude/hooks/scripts/gwt-forward-hook.sh PreToolUse",
+            "type": "command"
+          }
+        ],
+        "matcher": "*"
+      },
+      {
+        "hooks": [
+          {
+            "command": ".claude/hooks/scripts/gwt-block-git-branch-ops.sh",
+            "type": "command"
+          },
+          {
+            "command": ".claude/hooks/scripts/gwt-block-cd-command.sh",
+            "type": "command"
+          },
+          {
+            "command": ".claude/hooks/scripts/gwt-block-file-ops.sh",
+            "type": "command"
+          },
+          {
+            "command": ".claude/hooks/scripts/gwt-block-git-dir-override.sh",
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash"
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "command": "scripts/auto-suggest-claude-md-hook.sh",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": ".claude/hooks/scripts/gwt-forward-hook.sh Stop",
+            "type": "command"
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "command": ".claude/hooks/scripts/gwt-forward-hook.sh UserPromptSubmit",
+            "type": "command"
+          }
+        ],
+        "matcher": "*"
+      }
+    ]
+  },
   "permissions": {
     "allow": [
       "mcp__unity-cli__system_ping",
@@ -109,83 +248,5 @@
       "mcp__unity-cli__package_registry_config",
       "mcp__unity-cli__search_tools"
     ]
-  },
-  "enableAllProjectMcpServers": true,
-  "enabledMcpjsonServers": [
-    "context7",
-    "google-search",
-    "markitdown",
-    "unity-cli"
-  ],
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/block-git-branch-ops.sh"
-          },
-          {
-            "type": "command",
-            "command": ".claude/hooks/block-cd-command.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "Edit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/block-cs-edit-tools.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/block-cs-edit-tools.sh"
-          }
-        ]
-      }
-    ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "scripts/auto-suggest-claude-md-hook.sh"
-          }
-        ]
-      }
-    ],
-    "PreCompact": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "scripts/auto-suggest-claude-md-hook.sh"
-          }
-        ]
-      }
-    ]
-  },
-  "enabledPlugins": {
-    "context7@claude-plugins-official": true,
-    "github@claude-plugins-official": true,
-    "feature-dev@claude-plugins-official": true,
-    "code-review@claude-plugins-official": true,
-    "commit-commands@claude-plugins-official": true,
-    "security-guidance@claude-plugins-official": true,
-    "pr-review-toolkit@claude-plugins-official": true,
-    "plugin-dev@claude-plugins-official": true,
-    "lsp@claude-plugins-official": true,
-    "typescript-lsp@claude-plugins-official": true,
-    "drawio@akiojin-skills": true,
-    "unity-cli@unity-cli": true,
-    "github@akiojin-skills": true,
-    "speckit@akiojin-skills": true
   }
 }
