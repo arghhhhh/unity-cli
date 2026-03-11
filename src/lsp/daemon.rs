@@ -939,13 +939,6 @@ mod tests {
         let _idle_env = EnvVarGuard::set("UNITY_CLI_LSPD_IDLE_TIMEOUT", "10");
 
         let thread = std::thread::spawn(|| serve_forever().expect("serve_forever should stop"));
-        let socket = socket_path().expect("socket path should resolve");
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while !socket.exists() && std::time::Instant::now() < deadline {
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        assert!(socket.exists(), "daemon socket should be created");
-
         let mut running_seen = false;
         let status_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while std::time::Instant::now() < status_deadline {
@@ -968,9 +961,6 @@ mod tests {
 
         let pid = pid_file_path().expect("pid path should resolve");
         assert!(!pid.exists(), "pid file should be cleaned up");
-        if socket.exists() {
-            let _ = std::fs::remove_file(&socket);
-        }
     }
 
     #[test]

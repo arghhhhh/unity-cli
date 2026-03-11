@@ -258,12 +258,20 @@ mod tests {
         env::remove_var("UNITY_CLI_HOST");
         env::remove_var("UNITY_CLI_PORT");
         env::remove_var("UNITY_CLI_TIMEOUT_MS");
-        std::env::remove_var("UNITY_CLI_REGISTRY_PATH");
+        let registry_path = std::env::temp_dir().join(format!(
+            "unity-cli-config-defaults-{}.json",
+            std::process::id()
+        ));
+        std::env::set_var("UNITY_CLI_REGISTRY_PATH", &registry_path);
+        let _ = std::fs::remove_file(&registry_path);
 
         let context = ExecutionContext::from_overrides(&RuntimeOverrides::default())
             .expect("context should resolve");
         assert_eq!(context.endpoint.host, "localhost");
         assert_eq!(context.endpoint.port, 6400);
+
+        std::env::remove_var("UNITY_CLI_REGISTRY_PATH");
+        let _ = std::fs::remove_file(&registry_path);
     }
 
     #[test]

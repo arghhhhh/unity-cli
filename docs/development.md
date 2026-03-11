@@ -258,6 +258,7 @@ CI is defined in `.github/workflows/lint.yml`, `.github/workflows/test.yml`, and
 | LSP Tests (required) | push / PR | `dotnet test lsp/Server.Tests.csproj` |
 | LSP Performance (required) | push / PR | `scripts/lsp-perf-check.sh` (full cases + history artifact) |
 | Skill Routing Eval | daily schedule / manual | `scripts/skill-eval/llm-routing-eval.sh` (`.github/workflows/skill-routing-eval.yml`) |
+
 Skill Contract Check, Rust Tests, LSP Tests, and LSP Performance are required checks for PR merges.
 
 ## Capability Catalog
@@ -701,6 +702,7 @@ CI は `.github/workflows/lint.yml` / `.github/workflows/test.yml` / `.github/wo
 | LSP Tests (required) | push / PR | `dotnet test lsp/Server.Tests.csproj` |
 | LSP Performance (required) | push / PR | `scripts/lsp-perf-check.sh`（全ケース実行 + 履歴artifact） |
 | Skill Routing Eval | 毎日スケジュール / 手動 | `scripts/skill-eval/llm-routing-eval.sh`（`.github/workflows/skill-routing-eval.yml`） |
+
 Skill Contract Check / Rust Tests / LSP Tests / LSP Performance は PR マージの必須チェックです。
 
 ## 機能カタログ
