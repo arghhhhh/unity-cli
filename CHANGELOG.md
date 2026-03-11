@@ -1,3 +1,20 @@
+## [0.5.0] - 2026-03-11
+
+### 🐛 Bug Fixes
+
+- *(ci)* Stabilize runtime tests and skill contract check
+- *(ci)* Stabilize checks and keep unity e2e local-only
+- *(ci)* Repair markdown docs and rust test stability
+- *(ci)* Harden linux daemon checks
+
+### 🚜 Refactor
+
+- Modularize runtime and upgrade lsp to dotnet 10
+
+### ⚙️ Miscellaneous Tasks
+
+- Add codecov coverage reporting
+
 ## [0.4.1] - 2026-03-11
 
 ### 🐛 Bug Fixes
