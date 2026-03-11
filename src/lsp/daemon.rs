@@ -939,19 +939,22 @@ mod tests {
         let _idle_env = EnvVarGuard::set("UNITY_CLI_LSPD_IDLE_TIMEOUT", "10");
 
         let thread = std::thread::spawn(|| serve_forever().expect("serve_forever should stop"));
-        let mut running_seen = false;
+        let mut stopped = false;
         let status_deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
         while std::time::Instant::now() < status_deadline {
-            if ping().is_ok() {
-                running_seen = true;
-                break;
+            if let Ok(value) = stop() {
+                if value
+                    .get("stopped")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false)
+                {
+                    stopped = true;
+                    break;
+                }
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
-        assert!(running_seen, "daemon did not respond to status");
-
-        let stop_value = stop().expect("stop should succeed");
-        assert_eq!(stop_value["success"], true);
+        assert!(stopped, "daemon did not respond to stop");
 
         thread.join().expect("daemon thread should join");
         cleanup_stale_files();

@@ -93,7 +93,9 @@ if [[ ! -d "${PROJECT_ROOT}/Assets" || ! -d "${PROJECT_ROOT}/Packages" ]]; then
   exit 1
 fi
 
-if [[ -x "${REPO_ROOT}/.cache/csharp-lsp/csharp-lsp/osx-arm64/server" || -x "${REPO_ROOT}/.cache/csharp-lsp/csharp-lsp/osx-arm64/Server" ]]; then
+if compgen -G "${REPO_ROOT}/.cache/csharp-lsp/csharp-lsp/*/server" > /dev/null; then
+  UNITY_CLI_TOOLS_ROOT_OVERRIDE="${REPO_ROOT}/.cache/csharp-lsp"
+elif compgen -G "${REPO_ROOT}/.cache/csharp-lsp/csharp-lsp/*/Server" > /dev/null; then
   UNITY_CLI_TOOLS_ROOT_OVERRIDE="${REPO_ROOT}/.cache/csharp-lsp"
 fi
 
