@@ -1,4 +1,5 @@
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 
 use anyhow::Result;
@@ -29,7 +30,19 @@ impl DaemonRuntimePaths {
 
     #[cfg(unix)]
     pub fn socket_file(&self) -> Result<PathBuf> {
-        Ok(self.dir()?.join(format!("{}.sock", self.name)))
+        let preferred = self.dir()?.join(format!("{}.sock", self.name));
+        if preferred.as_os_str().len() < 100 {
+            return Ok(preferred);
+        }
+
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        preferred.hash(&mut hasher);
+        let shortened = std::env::temp_dir().join(format!(
+            "unity-cli-{}-{:016x}.sock",
+            self.name,
+            hasher.finish()
+        ));
+        Ok(shortened)
     }
 
     pub fn cleanup(&self) {

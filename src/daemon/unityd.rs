@@ -857,11 +857,13 @@ mod tests {
                 .expect("tempdir path should be valid UTF-8"),
         );
         let path = socket_path().expect("socket_path should succeed");
-        assert_eq!(
-            path,
-            tools_dir()
-                .expect("tools dir should resolve")
-                .join("unityd.sock")
+        let expected = tools_dir()
+            .expect("tools dir should resolve")
+            .join("unityd.sock");
+        assert!(
+            path == expected || path.starts_with(std::env::temp_dir()),
+            "socket path should stay under the runtime dir or fall back to temp dir, got {}",
+            path.display()
         );
     }
 

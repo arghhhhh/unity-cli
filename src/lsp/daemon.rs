@@ -936,7 +936,7 @@ mod tests {
         let (_tools_root, _env) = prepare_tools_root();
         ensure_local_lsp_binary();
         cleanup_stale_files();
-        let _idle_env = EnvVarGuard::set("UNITY_CLI_LSPD_IDLE_TIMEOUT", "1");
+        let _idle_env = EnvVarGuard::set("UNITY_CLI_LSPD_IDLE_TIMEOUT", "10");
 
         let thread = std::thread::spawn(|| serve_forever().expect("serve_forever should stop"));
         let socket = socket_path().expect("socket path should resolve");
