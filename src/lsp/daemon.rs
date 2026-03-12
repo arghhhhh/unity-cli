@@ -943,7 +943,9 @@ mod tests {
         assert!(socket.exists(), "socket file should exist before stop");
 
         let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("listener should accept stop client");
+            let (mut stream, _) = listener
+                .accept()
+                .expect("listener should accept stop client");
             stream
                 .set_nonblocking(false)
                 .expect("accepted stream should become blocking");
