@@ -1,3 +1,33 @@
+## [0.8.0] - 2026-03-12
+
+### 🚀 Features
+
+- *(input)* Stabilize simulation e2e with batch host
+- Add media perf benchmark and capture telemetry
+
+### 🐛 Bug Fixes
+
+- *(input)* Address review regressions
+
+### 🎨 Styling
+
+- *(lsp)* Format deterministic daemon stop test
+- *(rust)* Format review fixes
+
+### 🧪 Testing
+
+- *(lsp)* Wait for daemon readiness before stop assertion
+- *(daemon)* Cover timing response paths
+- *(lsp)* Relax daemon stop polling under coverage
+- *(lsp)* Wait for daemon socket before stop
+- *(lsp)* Send stop request directly in daemon test
+- *(lsp)* Make daemon stop test deterministic
+- *(lsp)* Retry nonblocking daemon accept in CI
+- *(lsp)* Isolate pid file cleanup checks
+
+### ⚙️ Miscellaneous Tasks
+
+- *(unity)* Update project editor version
 ## [0.7.3] - 2026-03-11
 
 ### 🐛 Bug Fixes
