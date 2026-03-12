@@ -934,31 +934,31 @@ mod tests {
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
         let (_tools_root, _env) = prepare_tools_root();
-        ensure_local_lsp_binary();
         cleanup_stale_files();
-        let _idle_env = EnvVarGuard::set("UNITY_CLI_LSPD_IDLE_TIMEOUT", "10");
         let pid = pid_file_path().expect("pid path should resolve");
         let socket = socket_path().expect("socket path should resolve");
+        let listener = bind_listener().expect("listener should bind");
+        write_pid_file().expect("pid file should be written");
+        assert!(pid.exists(), "pid file should exist before stop");
+        assert!(socket.exists(), "socket file should exist before stop");
 
-        let thread = std::thread::spawn(|| serve_forever().expect("serve_forever should stop"));
-        let mut ready = false;
-        let ready_deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-        while std::time::Instant::now() < ready_deadline {
-            if pid.exists() && socket.exists() {
-                ready = true;
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-        assert!(ready, "daemon did not become ready");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("listener should accept stop client");
+            stream
+                .set_nonblocking(false)
+                .expect("accepted stream should become blocking");
+            let action = handle_stream(&mut stream).expect("stop request should be handled");
+            assert!(matches!(action, ConnectionAction::Stop));
+            cleanup_stale_files();
+        });
 
         let mut client = std::os::unix::net::UnixStream::connect(&socket)
             .expect("client should connect to daemon socket");
         client
-            .set_read_timeout(Some(std::time::Duration::from_secs(30)))
+            .set_read_timeout(Some(std::time::Duration::from_secs(10)))
             .expect("client read timeout should be set");
         client
-            .set_write_timeout(Some(std::time::Duration::from_secs(30)))
+            .set_write_timeout(Some(std::time::Duration::from_secs(10)))
             .expect("client write timeout should be set");
         let payload =
             serde_json::to_string(&DaemonRequest::Stop).expect("stop request should serialize");
@@ -986,11 +986,9 @@ mod tests {
             Some(true)
         );
 
-        thread.join().expect("daemon thread should join");
-        cleanup_stale_files();
-
-        let pid = pid_file_path().expect("pid path should resolve");
+        server.join().expect("server thread should join");
         assert!(!pid.exists(), "pid file should be cleaned up");
+        assert!(!socket.exists(), "socket file should be cleaned up");
     }
 
     #[test]
