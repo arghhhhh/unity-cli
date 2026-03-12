@@ -206,6 +206,9 @@ scripts/e2e-all-tools.sh
 
 # Full local E2E sweep with custom host/port
 scripts/e2e-all-tools.sh --host 192.168.1.10 --port 9090
+
+# Media / Profiler benchmark artifacts under UnityCliBridge/.unity/perf-media/
+scripts/perf-media-benchmark.sh
 ```
 
 ### Scene Layout Policy
@@ -213,6 +216,18 @@ scripts/e2e-all-tools.sh --host 192.168.1.10 --port 9090
 - Stable tracked scenes stay in `UnityCliBridge/Assets/Scenes/` (`SampleScene` only).
 - Local E2E-generated scenes go under `UnityCliBridge/Assets/Scenes/Generated/E2E/` and must not be committed.
 - UI manual test scenes continue to use `UnityCliBridge/Assets/Scenes/Generated/UI/`.
+
+### Media Perf Benchmark
+
+- `scripts/lsp-perf-check.sh` is still the canonical benchmark for LSP/search/index performance. `scripts/perf-media-benchmark.sh` is a separate runtime benchmark for screenshot/video/profiler flows.
+- `scripts/perf-media-benchmark.sh` generates `Assets/Scenes/Generated/E2E/Performance/UnityCli_PerfBenchmark.unity` via `Tools/Unity CLI/Performance/Generate Media Perf Scene`.
+- Benchmark outputs are written under `UnityCliBridge/.unity/perf-media/<timestamp>/`.
+- The script captures:
+  - `get_command_stats`
+  - `profiler_start` / `profiler_stop`
+  - `capture_screenshot`
+  - `capture_video_start` / `capture_video_status` / `capture_video_stop`
+- Review `summary.md` and `result.json` in the artifact directory for CLI latency, bridge timing deltas, and profiler metrics.
 
 ## Troubleshooting
 
@@ -312,6 +327,10 @@ These are guidance values and vary by host:
 # LSP perf measurement with thresholds + size/token metrics
 ./scripts/lsp-perf-check.sh
 
+# Media capture / profiler benchmark against a connected Unity Editor
+# This is separate from lsp-perf-check.sh and does not append to lsp-history.jsonl.
+./scripts/perf-media-benchmark.sh
+
 # Stored history file
 cat specs/perf/lsp-history.jsonl | tail -n 5
 ```
@@ -322,6 +341,7 @@ Regression policy:
 2. Keep `specs/perf/lsp-history.jsonl` as append-only history.
 3. Use recorded trends as baseline comparison input.
 4. Exclude `system ping` from strict regression gate (depends on Unity availability and machine/network state).
+5. Use `scripts/perf-media-benchmark.sh` only for runtime screenshot / video / profiler evidence alongside `get_command_stats`; it is not part of the LSP history pipeline.
 
 ## Skill Accuracy Evaluation
 
@@ -662,6 +682,9 @@ scripts/e2e-all-tools.sh
 
 # ホスト・ポート指定
 scripts/e2e-all-tools.sh --host 192.168.1.10 --port 9090
+
+# media capture / profiler ベンチマーク
+scripts/perf-media-benchmark.sh
 ```
 
 ### シーン配置ポリシー
@@ -669,6 +692,14 @@ scripts/e2e-all-tools.sh --host 192.168.1.10 --port 9090
 - `UnityCliBridge/Assets/Scenes/` 直下は固定で追跡するシーン（`SampleScene` のみ）を配置する
 - ローカル E2E 生成シーンは `UnityCliBridge/Assets/Scenes/Generated/E2E/` に作成し、コミットしない
 - UI 手動検証シーン（UGUI/UITK/IMGUI）は `Tools/Unity CLI/UI Tests/*` で必要時に `UnityCliBridge/Assets/Scenes/Generated/UI/` へ生成する
+
+### Media Perf Benchmark
+
+- `scripts/lsp-perf-check.sh` は引き続き LSP / search / index 性能の正規ベンチマークで、`scripts/perf-media-benchmark.sh` とは別物。
+- `scripts/perf-media-benchmark.sh` は `Tools/Unity CLI/Performance/Generate Media Perf Scene` 経由で `Assets/Scenes/Generated/E2E/Performance/UnityCli_PerfBenchmark.unity` を生成する。
+- 出力 artifact は `UnityCliBridge/.unity/perf-media/<timestamp>/` に保存する。
+- 保存対象は `get_command_stats`、`profiler_start` / `profiler_stop`、`capture_screenshot`、`capture_video_start` / `capture_video_status` / `capture_video_stop`。
+- 確認対象は `summary.md` と `result.json`。LSP の履歴ファイル `specs/perf/lsp-history.jsonl` には追記しない。
 
 ## トラブルシューティング
 
@@ -768,6 +799,10 @@ unity-cli tool list --host 127.0.0.1 --port 6400 --output json | jq -r '.[]'
 # LSP性能計測 + 閾値チェック + サイズ/トークン計測
 ./scripts/lsp-perf-check.sh
 
+# 接続済み Unity Editor に対する media capture / profiler ベンチマーク
+# これは lsp-perf-check.sh とは別系統で、lsp-history.jsonl には追記しない
+./scripts/perf-media-benchmark.sh
+
 # 保存済み履歴の確認
 cat specs/perf/lsp-history.jsonl | tail -n 5
 ```
@@ -778,6 +813,7 @@ cat specs/perf/lsp-history.jsonl | tail -n 5
 2. `specs/perf/lsp-history.jsonl` を追記履歴として維持する
 3. 履歴トレンドをベースライン比較に利用する
 4. `system ping` は Unity の可用性に依存するため厳密ゲートには含めない
+5. スクリーンショット / 動画 / Profiler の回帰確認には `scripts/perf-media-benchmark.sh` を使い、`get_command_stats` の結果も合わせて保存する。ただし LSP 履歴パイプラインには含めない
 
 ## スキル精度評価
 

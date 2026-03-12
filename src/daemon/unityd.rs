@@ -13,6 +13,7 @@ use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
 use crate::config::RuntimeConfig;
+use crate::core::command_stats::RemoteCommandTiming;
 use crate::core::contracts::BatchItem;
 use crate::daemon::runtime::DaemonRuntimePaths;
 use crate::lsp_manager;
@@ -48,6 +49,15 @@ struct DaemonResponse {
     result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    timing: Option<RemoteCommandTiming>,
+}
+
+#[derive(Debug)]
+pub struct DaemonToolCall {
+    pub value: Value,
+    pub timing: Option<RemoteCommandTiming>,
+    pub daemon_roundtrip_ms: f64,
 }
 
 #[derive(Debug, Error)]
@@ -301,6 +311,17 @@ pub async fn try_call_tool(
     params: &Value,
     config: &RuntimeConfig,
 ) -> std::result::Result<Value, DaemonCallError> {
+    Ok(try_call_tool_with_timing(tool_name, params, config)
+        .await?
+        .value)
+}
+
+pub async fn try_call_tool_with_timing(
+    tool_name: &str,
+    params: &Value,
+    config: &RuntimeConfig,
+) -> std::result::Result<DaemonToolCall, DaemonCallError> {
+    let started_at = Instant::now();
     let response = request(DaemonRequest::Tool {
         tool_name: tool_name.to_string(),
         params: params.clone(),
@@ -310,7 +331,11 @@ pub async fn try_call_tool(
     })?;
 
     if response.ok {
-        return Ok(response.result.unwrap_or(Value::Null));
+        return Ok(DaemonToolCall {
+            value: response.result.unwrap_or(Value::Null),
+            timing: response.timing,
+            daemon_roundtrip_ms: started_at.elapsed().as_secs_f64() * 1000.0,
+        });
     }
 
     Err(DaemonCallError::RequestFailed(
@@ -520,6 +545,7 @@ async fn handle_request(
                 ok: true,
                 result: Some(json!({ "pong": true })),
                 error: None,
+                timing: None,
             },
             ConnectionAction::Continue,
         )),
@@ -536,6 +562,7 @@ async fn handle_request(
                     value
                 }),
                 error: None,
+                timing: None,
             },
             ConnectionAction::Continue,
         )),
@@ -544,6 +571,7 @@ async fn handle_request(
                 ok: true,
                 result: Some(json!({ "stopping": true })),
                 error: None,
+                timing: None,
             },
             ConnectionAction::Stop,
         )),
@@ -555,8 +583,15 @@ async fn handle_request(
             timeout_ms,
         } => {
             let timeout = Duration::from_millis(timeout_ms);
+            let connect_started_at = Instant::now();
             let result = match pool.get_or_connect(&host, port, timeout).await {
-                Ok(client) => client.call_tool(&tool_name, params).await,
+                Ok(client) => {
+                    let connect_ms = connect_started_at.elapsed().as_secs_f64() * 1000.0;
+                    match client.call_tool_with_timing(&tool_name, params).await {
+                        Ok(outcome) => Ok((outcome, connect_ms)),
+                        Err(error) => Err(error),
+                    }
+                }
                 Err(e) => {
                     pool.remove(&host, port);
                     Err(e)
@@ -564,11 +599,15 @@ async fn handle_request(
             };
 
             match result {
-                Ok(value) => Ok((
+                Ok((outcome, connect_ms)) => Ok((
                     DaemonResponse {
                         ok: true,
-                        result: Some(value),
+                        result: Some(outcome.value),
                         error: None,
+                        timing: Some(RemoteCommandTiming {
+                            connect_ms: Some(connect_ms),
+                            transport: outcome.timing,
+                        }),
                     },
                     ConnectionAction::Continue,
                 )),
@@ -579,6 +618,7 @@ async fn handle_request(
                             ok: false,
                             result: None,
                             error: Some(error.to_string()),
+                            timing: None,
                         },
                         ConnectionAction::Continue,
                     ))
@@ -619,6 +659,7 @@ async fn handle_request(
                     ok: true,
                     result: Some(Value::Array(results)),
                     error: None,
+                    timing: None,
                 },
                 ConnectionAction::Continue,
             ))
@@ -776,6 +817,7 @@ mod tests {
             ok: true,
             result: Some(json!({"pong": true})),
             error: None,
+            timing: None,
         };
         let json = serde_json::to_string(&response).unwrap();
         let parsed: DaemonResponse = serde_json::from_str(&json).unwrap();
@@ -790,12 +832,39 @@ mod tests {
             ok: false,
             result: None,
             error: Some("something went wrong".to_string()),
+            timing: None,
         };
         let json = serde_json::to_string(&response).unwrap();
         let parsed: DaemonResponse = serde_json::from_str(&json).unwrap();
         assert!(!parsed.ok);
         assert!(parsed.result.is_none());
         assert_eq!(parsed.error.as_deref(), Some("something went wrong"));
+    }
+
+    #[test]
+    fn daemon_response_round_trip_preserves_timing() {
+        let response = DaemonResponse {
+            ok: true,
+            result: Some(json!({"pong": true})),
+            error: None,
+            timing: Some(RemoteCommandTiming {
+                connect_ms: Some(1.25),
+                transport: crate::core::command_stats::TransportTiming {
+                    send_ms: 0.25,
+                    read_ms: 0.5,
+                    normalize_ms: 0.75,
+                    total_ms: 1.5,
+                },
+            }),
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        let parsed: DaemonResponse = serde_json::from_str(&json).unwrap();
+        let timing = parsed.timing.expect("timing should be preserved");
+        assert_eq!(timing.connect_ms, Some(1.25));
+        assert_eq!(timing.transport.send_ms, 0.25);
+        assert_eq!(timing.transport.read_ms, 0.5);
+        assert_eq!(timing.transport.normalize_ms, 0.75);
+        assert_eq!(timing.transport.total_ms, 1.5);
     }
 
     #[test]
@@ -965,6 +1034,63 @@ mod tests {
 
         let ping_err = ping().expect_err("ping should fail when daemon is absent");
         assert!(!format!("{ping_err:#}").is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn try_call_tool_with_timing_returns_daemon_timing() {
+        let _guard = env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let home = tempdir().expect("tempdir should succeed");
+        let _home = EnvVarGuard::set(
+            "HOME",
+            home.path()
+                .to_str()
+                .expect("tempdir path should be valid UTF-8"),
+        );
+
+        let response_json = serde_json::to_string(&DaemonResponse {
+            ok: true,
+            result: Some(json!({"pong": true})),
+            error: None,
+            timing: Some(RemoteCommandTiming {
+                connect_ms: Some(1.5),
+                transport: crate::core::command_stats::TransportTiming {
+                    send_ms: 0.25,
+                    read_ms: 0.5,
+                    normalize_ms: 0.75,
+                    total_ms: 1.5,
+                },
+            }),
+        })
+        .expect("response serialization should succeed");
+        let server = spawn_unix_server_once(&response_json);
+
+        let config = RuntimeConfig {
+            host: "127.0.0.1".to_string(),
+            port: 6400,
+            timeout: Duration::from_millis(500),
+        };
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime should build");
+        let outcome = runtime
+            .block_on(try_call_tool_with_timing("ping", &json!({}), &config))
+            .expect("daemon tool call should succeed");
+
+        assert_eq!(outcome.value["pong"], true);
+        assert!(outcome.daemon_roundtrip_ms >= 0.0);
+        let timing = outcome.timing.expect("timing should be returned");
+        assert_eq!(timing.connect_ms, Some(1.5));
+        assert_eq!(timing.transport.send_ms, 0.25);
+        assert_eq!(timing.transport.read_ms, 0.5);
+        assert_eq!(timing.transport.normalize_ms, 0.75);
+        assert_eq!(timing.transport.total_ms, 1.5);
+
+        server.join().expect("server thread should join");
     }
 
     #[cfg(unix)]

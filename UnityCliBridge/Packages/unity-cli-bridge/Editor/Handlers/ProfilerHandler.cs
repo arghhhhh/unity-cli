@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using Newtonsoft.Json.Linq;
@@ -7,6 +8,7 @@ using Unity.Profiling;
 using UnityEditor;
 using UnityEditorInternal;
 using UnityEngine;
+using UnityCliBridge.Core;
 using UnityCliBridge.Logging;
 
 namespace UnityCliBridge.Handlers
@@ -46,6 +48,8 @@ namespace UnityCliBridge.Handlers
         {
             try
             {
+                var timings = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+                var setupStopwatch = Stopwatch.StartNew();
                 var mode = parameters["mode"]?.ToString() ?? "normal";
                 var recordToFile = parameters["recordToFile"]?.ToObject<bool>() ?? true;
                 var metricsCount = parameters["metrics"]?.ToObject<string[]>()?.Length ?? 0;
@@ -100,7 +104,10 @@ namespace UnityCliBridge.Handlers
                     var captureDir = Path.Combine(workspaceRoot, ".unity", "capture");
                     s_OutputPath = Path.Combine(captureDir, $"profiler_{s_SessionId}_{timestamp}.data");
                     s_OutputPath = s_OutputPath.Replace('\\', '/');
+                    var ioStopwatch = Stopwatch.StartNew();
                     EnsureDirectory(s_OutputPath);
+                    ioStopwatch.Stop();
+                    timings["ioMs"] = ioStopwatch.Elapsed.TotalMilliseconds;
                 }
                 else
                 {
@@ -154,17 +161,19 @@ namespace UnityCliBridge.Handlers
                 s_Mode = mode;
                 s_RecordToFile = recordToFile;
                 s_Metrics = metrics;
+                setupStopwatch.Stop();
+                timings["setupMs"] = setupStopwatch.Elapsed.TotalMilliseconds;
 
                 BridgeLogger.Log("ProfilerHandler", $"Start] Profiling session started successfully: sessionId={s_SessionId}, outputPath={s_OutputPath}");
 
                 // 13. Return response
-                return new
+                return AttachTimings(JObject.FromObject(new
                 {
                     sessionId = s_SessionId,
                     startedAt = s_StartedAt.ToString("o"),
                     isRecording = true,
                     outputPath = s_OutputPath
-                };
+                }), timings);
             }
             catch (Exception ex)
             {
@@ -184,6 +193,7 @@ namespace UnityCliBridge.Handlers
         {
             try
             {
+                var timings = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
                 BridgeLogger.Log("ProfilerHandler", $"Stop] Stopping profiling session: sessionId={s_SessionId ?? "none"}");
 
                 var requestedSessionId = parameters["sessionId"]?.ToString();
@@ -228,6 +238,7 @@ namespace UnityCliBridge.Handlers
                 object metrics = null;
                 if (!s_RecordToFile && s_ProfilerRecorders != null)
                 {
+                    var metricsStopwatch = Stopwatch.StartNew();
                     var metricsList = new List<object>();
                     foreach (var metricRecorder in s_ProfilerRecorders)
                     {
@@ -243,6 +254,8 @@ namespace UnityCliBridge.Handlers
                         }
                     }
                     metrics = metricsList.ToArray();
+                    metricsStopwatch.Stop();
+                    timings["metricsMs"] = metricsStopwatch.Elapsed.TotalMilliseconds;
                 }
 
                 // 5. Save .data file if recordToFile=true
@@ -251,7 +264,10 @@ namespace UnityCliBridge.Handlers
                 {
                     try
                     {
+                        var ioStopwatch = Stopwatch.StartNew();
                         ProfilerDriver.SaveProfile(s_OutputPath);
+                        ioStopwatch.Stop();
+                        timings["ioMs"] = ioStopwatch.Elapsed.TotalMilliseconds;
                     }
                     catch (Exception ex)
                     {
@@ -307,11 +323,12 @@ namespace UnityCliBridge.Handlers
                 s_LastSessionId = sessionId;
                 s_LastAutoStopped = s_StopIsAuto;
                 s_StopIsAuto = false;
+                timings["cleanupMs"] = 0;
 
                 BridgeLogger.Log("ProfilerHandler", $"Stop] Profiling session stopped successfully: sessionId={sessionId}, duration={duration:F2}s, frameCount={frameCount}");
 
                 // 10. Return response
-                return s_LastStopResult;
+                return AttachTimings(JObject.FromObject(s_LastStopResult), timings);
             }
             catch (Exception ex)
             {
@@ -379,6 +396,8 @@ namespace UnityCliBridge.Handlers
         {
             try
             {
+                var timings = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+                var queryStopwatch = Stopwatch.StartNew();
                 var listAvailable = parameters["listAvailable"]?.ToObject<bool>() ?? false;
                 var metrics = parameters["metrics"]?.ToObject<string[]>();
 
@@ -419,7 +438,9 @@ namespace UnityCliBridge.Handlers
                         }
                     };
 
-                    return new { categories };
+                    queryStopwatch.Stop();
+                    timings["queryMs"] = queryStopwatch.Elapsed.TotalMilliseconds;
+                    return AttachTimings(JObject.FromObject(new { categories }), timings);
                 }
                 else
                 {
@@ -466,7 +487,9 @@ namespace UnityCliBridge.Handlers
                             }
                         }
 
-                        return new { metrics = metricsList.ToArray() };
+                        queryStopwatch.Stop();
+                        timings["queryMs"] = queryStopwatch.Elapsed.TotalMilliseconds;
+                        return AttachTimings(JObject.FromObject(new { metrics = metricsList.ToArray() }), timings);
                     }
                     finally
                     {
@@ -526,6 +549,42 @@ namespace UnityCliBridge.Handlers
 
             // Fallback: use project root
             return projectRoot.Replace('\\', '/');
+        }
+
+        private static JObject AttachTimings(JObject payload, IDictionary<string, double> timings)
+        {
+            if (payload == null || timings == null || timings.Count == 0)
+            {
+                return payload;
+            }
+
+            foreach (var pair in timings)
+            {
+                if (string.IsNullOrWhiteSpace(pair.Key) || double.IsNaN(pair.Value) || double.IsInfinity(pair.Value) || pair.Value < 0)
+                {
+                    continue;
+                }
+
+                BridgeCommandStats.RecordStageDuration(ToStageKey(pair.Key), pair.Value);
+            }
+
+            return payload;
+        }
+
+        private static string ToStageKey(string key)
+        {
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                return key;
+            }
+
+            var trimmed = key.Trim();
+            if (trimmed.EndsWith("Ms", StringComparison.OrdinalIgnoreCase))
+            {
+                trimmed = trimmed.Substring(0, trimmed.Length - 2);
+            }
+
+            return trimmed.Replace(" ", "_").ToLowerInvariant() + "_ms";
         }
 
         /// <summary>

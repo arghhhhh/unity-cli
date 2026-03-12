@@ -759,12 +759,17 @@ mod tests {
 
     #[test]
     fn write_pid_file_and_cleanup_manage_files_under_tools_root() {
+        let _guard = env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let (_tools_root, _env) = prepare_tools_root();
         cleanup_stale_files();
         let pid_path = pid_file_path().expect("pid file path should resolve");
         write_pid_file().expect("pid file write should succeed");
         assert!(pid_path.exists());
 
         cleanup_stale_files();
+        assert!(!pid_path.exists());
     }
 
     #[cfg(unix)]
@@ -934,33 +939,74 @@ mod tests {
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
         let (_tools_root, _env) = prepare_tools_root();
-        ensure_local_lsp_binary();
         cleanup_stale_files();
-        let _idle_env = EnvVarGuard::set("UNITY_CLI_LSPD_IDLE_TIMEOUT", "10");
-
-        let thread = std::thread::spawn(|| serve_forever().expect("serve_forever should stop"));
-        let mut stopped = false;
-        let status_deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
-        while std::time::Instant::now() < status_deadline {
-            if let Ok(value) = stop() {
-                if value
-                    .get("stopped")
-                    .and_then(serde_json::Value::as_bool)
-                    .unwrap_or(false)
-                {
-                    stopped = true;
-                    break;
-                }
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        assert!(stopped, "daemon did not respond to stop");
-
-        thread.join().expect("daemon thread should join");
-        cleanup_stale_files();
-
         let pid = pid_file_path().expect("pid path should resolve");
+        let socket = socket_path().expect("socket path should resolve");
+        let listener = bind_listener().expect("listener should bind");
+        write_pid_file().expect("pid file should be written");
+        assert!(pid.exists(), "pid file should exist before stop");
+        assert!(socket.exists(), "socket file should exist before stop");
+
+        let server = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let (mut stream, _) = loop {
+                match listener.accept() {
+                    Ok(pair) => break pair,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(
+                            std::time::Instant::now() < deadline,
+                            "listener did not accept stop client before timeout"
+                        );
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("listener should accept stop client: {error}"),
+                }
+            };
+            stream
+                .set_nonblocking(false)
+                .expect("accepted stream should become blocking");
+            let action = handle_stream(&mut stream).expect("stop request should be handled");
+            assert!(matches!(action, ConnectionAction::Stop));
+            cleanup_stale_files();
+        });
+
+        let mut client = std::os::unix::net::UnixStream::connect(&socket)
+            .expect("client should connect to daemon socket");
+        client
+            .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .expect("client read timeout should be set");
+        client
+            .set_write_timeout(Some(std::time::Duration::from_secs(10)))
+            .expect("client write timeout should be set");
+        let payload =
+            serde_json::to_string(&DaemonRequest::Stop).expect("stop request should serialize");
+        client
+            .write_all(payload.as_bytes())
+            .expect("stop request write should succeed");
+        client
+            .write_all(b"\n")
+            .expect("stop request newline write should succeed");
+        client.flush().expect("stop request flush should succeed");
+
+        let mut response_line = String::new();
+        BufReader::new(client)
+            .read_line(&mut response_line)
+            .expect("stop response should be readable");
+        let response: DaemonResponse =
+            serde_json::from_str(response_line.trim()).expect("stop response should parse");
+        assert!(response.ok, "daemon stop response should be ok");
+        assert_eq!(
+            response
+                .result
+                .as_ref()
+                .and_then(|value| value.get("stopping"))
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+
+        server.join().expect("server thread should join");
         assert!(!pid.exists(), "pid file should be cleaned up");
+        assert!(!socket.exists(), "socket file should be cleaned up");
     }
 
     #[test]
