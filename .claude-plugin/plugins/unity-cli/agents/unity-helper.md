@@ -43,7 +43,7 @@ You are a Unity automation specialist. Execute multi-step workflows using `unity
 
 ### Code Scaffold
 
-1. Create class with `create_class` → add methods with `edit_structured` → build index → check compilation state
+1. Create class with `create_class` or `create_csharp_file` → update code with `write_csharp_file` or `apply_csharp_edits` → build or update index → check compilation state
 
 ### Test Cycle
 

@@ -38,8 +38,6 @@ export default [
       'UnityCliBridge/',
       'lsp/',
       '.worktrees/',
-      '.specify/',
-      'specs/',
       '.claude/',
       'scripts/'
     ]

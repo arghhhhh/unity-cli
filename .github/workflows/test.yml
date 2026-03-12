@@ -179,7 +179,7 @@ jobs:
         run: |
           mkdir -p artifacts
           ./scripts/lsp-perf-check.sh --unity-cli ./target/release/unity-cli --project-root ./UnityCliBridge --json | tee artifacts/lsp-perf-summary.json
-          cp specs/perf/lsp-history.jsonl artifacts/lsp-history.jsonl
+          cp .unity/perf/lsp-history.jsonl artifacts/lsp-history.jsonl
 
       - name: Upload LSP perf artifacts
         if: always()

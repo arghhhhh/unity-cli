@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/lsp-perf-check.sh
 # Measure and validate LSP-path performance for script/index tools.
-# Always runs the full case set and appends history to specs/perf/lsp-history.jsonl.
+# Always runs the full case set and appends history to .unity/perf/lsp-history.jsonl.
 
 set -u -o pipefail
 
@@ -16,7 +16,7 @@ WARMUP=1
 JSON_OUTPUT=0
 
 TOKENIZER_NAME="o200k_base"
-HISTORY_FILE="${REPO_ROOT}/specs/perf/lsp-history.jsonl"
+HISTORY_FILE="${REPO_ROOT}/.unity/perf/lsp-history.jsonl"
 
 # Thresholds (ms): can be overridden by env.
 THRESHOLD_GET_SYMBOLS_MS="${UNITY_CLI_LSP_PERF_GET_SYMBOLS_MS:-2500}"
