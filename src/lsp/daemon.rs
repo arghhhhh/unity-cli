@@ -939,6 +939,23 @@ mod tests {
         let _idle_env = EnvVarGuard::set("UNITY_CLI_LSPD_IDLE_TIMEOUT", "10");
 
         let thread = std::thread::spawn(|| serve_forever().expect("serve_forever should stop"));
+        let mut ready = false;
+        let ready_deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while std::time::Instant::now() < ready_deadline {
+            if let Ok(value) = status() {
+                if value
+                    .get("running")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false)
+                {
+                    ready = true;
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(ready, "daemon did not become ready");
+
         let mut stopped = false;
         let status_deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
         while std::time::Instant::now() < status_deadline {
