@@ -13,7 +13,7 @@
 ### ランタイム
 
 | 項目 | 旧 (unity-mcp-server) | 新 (unity-cli) |
-|------|----------------------|----------------|
+| ---- | -------------------- | -------------- |
 | 言語 | TypeScript / Node.js | Rust |
 | エントリーポイント | `src/index.ts` | `src/main.rs` |
 | パッケージマネージャ | npm | Cargo |
@@ -22,7 +22,7 @@
 ### 通信プロトコル
 
 | 項目 | 旧 | 新 |
-|------|----|----|
+| ---- | --- | --- |
 | プロトコル | MCP (Model Context Protocol) | 直接 TCP |
 | トランスポート | JSON-RPC over stdio | JSON over TCP |
 | 接続方式 | ホストアプリが stdio でサーバを起動 | CLI が TCP で Unity Editor に接続 |
@@ -32,7 +32,7 @@
 ### 環境変数
 
 | 旧変数名 | 新変数名 | 備考 |
-|----------|---------|------|
+| ---------- | --------- | ---- |
 | `UNITY_CLI_HOST` / `UNITY_CLI_HOST` | `UNITY_CLI_HOST` | ホスト名 |
 | `UNITY_CLI_PORT` | `UNITY_CLI_PORT` | ポート番号 |
 | `UNITY_CLI_TIMEOUT_MS` | `UNITY_CLI_TIMEOUT_MS` | タイムアウト |
@@ -42,7 +42,7 @@
 ### パッケージ名・名前空間
 
 | 項目 | 旧 | 新 |
-|------|----|----|
+| ---- | --- | --- |
 | リポジトリ名 | unity-mcp-server | unity-cli |
 | UPM パッケージ名 | com.akiojin.unity-mcp-bridge | com.akiojin.unity-cli-bridge |
 | C# 名前空間 | Legacy Bridge namespace | UnityCliBridge |
@@ -67,7 +67,7 @@ Unity 側の UPM パッケージは引き続き同一リポジトリ内で管理
 ### CI/CD
 
 | 項目 | 旧 | 新 |
-|------|----|----|
+| ---- | --- | --- |
 | テスト | npm test | cargo test + dotnet test |
 | リリース | npm publish | cargo publish + GitHub Release |
 | ワークフロー | ― | `.github/workflows/release.yml` |

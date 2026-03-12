@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 SKILLS_DIR="${REPO_ROOT}/.claude-plugin/plugins/unity-cli/skills"
 CATALOG_FILE="${REPO_ROOT}/src/tooling/tool_catalog.rs"
-REPORT_PATH="${REPO_ROOT}/specs/perf/skill-static-report.json"
+REPORT_PATH="${REPO_ROOT}/.unity/skill-eval/skill-static-report.json"
 JSON_OUTPUT=0
 
 usage() {
@@ -17,7 +17,7 @@ Usage: scripts/skill-eval/static-skill-contract-check.sh [options]
 Options:
   --skills-dir <path>   Skills directory (default: .claude-plugin/plugins/unity-cli/skills)
   --catalog <path>      Rust tool catalog file (default: src/tooling/tool_catalog.rs)
-  --report <path>       JSON report path (default: specs/perf/skill-static-report.json)
+  --report <path>       JSON report path (default: .unity/skill-eval/skill-static-report.json)
   --json                Print JSON report to stdout
 USAGE
 }
@@ -157,7 +157,7 @@ contracts = {
     },
     "replace_symbol_body": {
         "required": ["relative", "namePath", "body"],
-        "allowed": ["relative", "namePath", "body", "apply"],
+        "allowed": ["relative", "path", "namePath", "body", "apply"],
     },
     "insert_before_symbol": {
         "required": ["relative", "namePath", "text"],
@@ -179,6 +179,18 @@ contracts = {
         "required": ["name"],
         "allowed": ["name", "namespace", "inherits", "folder", "path"],
     },
+    "write_csharp_file": {
+        "required": ["newText"],
+        "allowed": ["relative", "path", "newText", "validate", "apply", "format", "refresh", "waitForCompile", "updateIndex"],
+    },
+    "create_csharp_file": {
+        "required": ["text"],
+        "allowed": ["relative", "path", "text", "overwrite", "validate", "apply", "format", "refresh", "waitForCompile", "updateIndex"],
+    },
+    "apply_csharp_edits": {
+        "required": ["files"],
+        "allowed": ["files", "validate", "apply", "format", "refresh", "waitForCompile", "updateIndex"],
+    },
     "read": {"required": ["path"], "allowed": ["path", "startLine", "maxLines"]},
     "search": {"required": ["pattern"], "allowed": ["pattern", "path", "limit"]},
     "list_packages": {"required": [], "allowed": []},
@@ -186,6 +198,11 @@ contracts = {
     "get_editor_info": {"required": [], "allowed": []},
     "get_editor_state": {"required": [], "allowed": []},
     "get_command_stats": {"required": [], "allowed": []},
+    "get_project_setting": {"required": ["path"], "allowed": ["path"]},
+    "set_project_setting": {
+        "required": ["path", "value", "confirmChanges"],
+        "allowed": ["path", "value", "confirmChanges"],
+    },
     "get_project_settings": {
         "required": [],
         "allowed": [
@@ -201,6 +218,14 @@ contracts = {
             "includeEditor",
             "includeBuild",
         ],
+    },
+    "get_package_setting": {
+        "required": ["package", "key"],
+        "allowed": ["package", "key", "scope"],
+    },
+    "set_package_setting": {
+        "required": ["package", "key", "value", "confirmChanges"],
+        "allowed": ["package", "key", "value", "scope", "confirmChanges"],
     },
     "update_project_settings": {
         "required": ["confirmChanges"],

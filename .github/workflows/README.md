@@ -17,7 +17,5 @@
   - runs after `chore(release):` pushes to `main` or manual dispatch
   - creates the release tag, builds release binaries for Linux/macOS/Windows
   - publishes GitHub Release assets
-- `specs-readme.yml`
-  - verifies `specs/specs.md` is in sync with Spec Kit
 - `main-pr-policy.yml` / `auto-merge.yml`
   - branch policy and PR automation

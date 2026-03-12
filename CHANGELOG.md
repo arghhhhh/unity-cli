@@ -1,4 +1,4 @@
-## [0.8.0] - 2026-03-12
+## [0.9.0] - 2026-03-13
 
 ### 🚀 Features
 
@@ -8,6 +8,15 @@
 ### 🐛 Bug Fixes
 
 - *(input)* Address review regressions
+- *(ci)* Align skill contract checks with csharp edit docs
+
+### 🚜 Refactor
+
+- Remove speckit and local specs
+
+### 📚 Documentation
+
+- *(skills)* Strengthen unity csharp edit workflow
 
 ### 🎨 Styling
 
@@ -28,6 +37,7 @@
 ### ⚙️ Miscellaneous Tasks
 
 - *(unity)* Update project editor version
+
 ## [0.7.3] - 2026-03-11
 
 ### 🐛 Bug Fixes

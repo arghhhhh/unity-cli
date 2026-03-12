@@ -37,7 +37,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: skill-static-report
-          path: specs/perf/skill-static-report.json
+          path: .unity/skill-eval/skill-static-report.json
           retention-days: 14
 
   docs:

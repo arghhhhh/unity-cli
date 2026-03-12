@@ -140,22 +140,10 @@ unity-cli --dry-run tool call create_scene --json '{"sceneName":"PreviewScene"}'
 unity-cli tool call run_tests --json '{"mode":"editmode"}'
 ```
 
-## GWT Spec Migration (Issue-first)
+## GWT Spec Workflow
 
-If you need to migrate local `specs/SPEC-*` directories to GitHub issues, use:
-
-```bash
-scripts/migrate-specs-to-issues.sh --dry-run --specs-dir "$(pwd)/specs"
-```
-
-If the plan looks correct, run without `--dry-run`:
-
-```bash
-scripts/migrate-specs-to-issues.sh --specs-dir "$(pwd)/specs"
-```
-
-The script writes progress/results to `migration-report.json` and applies the
-`gwt-spec` label to the created issues.
+Feature specifications are managed in GitHub Issues labeled `gwt-spec`.
+Use the Issue body as the source of truth for `Spec`, `Plan`, `Tasks`, and `TDD`.
 
 ## Configuration
 
