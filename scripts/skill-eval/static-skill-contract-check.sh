@@ -400,6 +400,7 @@ contracts = {
             "duration",
             "touchId",
             "touches",
+            "holdSeconds",
             "actions",
         ],
     },

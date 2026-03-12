@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using UnityEngine;
 using UnityEditor;
 using Newtonsoft.Json.Linq;
@@ -22,6 +23,10 @@ namespace UnityCliBridge.Handlers
     /// </summary>
     public static class InputSystemHandler
     {
+        private const string VirtualMouseName = "UnityCliVirtualMouse";
+        private const string VirtualGamepadName = "UnityCliVirtualGamepad";
+        private const string VirtualTouchscreenName = "UnityCliVirtualTouchscreen";
+
         private static Dictionary<string, InputDevice> activeDevices = new Dictionary<string, InputDevice>();
         private static List<InputEventPtr> queuedEvents = new List<InputEventPtr>();
         private static bool isSimulationActive = false;
@@ -37,6 +42,28 @@ namespace UnityCliBridge.Handlers
         // Virtual keyboard management
         private static Keyboard virtualKeyboard;
         private static HashSet<Key> pressedKeys = new HashSet<Key>();
+        private static string simulatedTypedText = string.Empty;
+        private static Vector2 simulatedMousePosition;
+        private static bool simulatedMouseLeftButton;
+        private static bool simulatedMouseRightButton;
+        private static bool simulatedMouseMiddleButton;
+        private static Vector2 simulatedMouseScroll;
+        private static bool simulatedGamepadButtonA;
+        private static bool simulatedGamepadButtonB;
+        private static bool simulatedGamepadButtonX;
+        private static bool simulatedGamepadButtonY;
+        private static bool simulatedGamepadStart;
+        private static bool simulatedGamepadSelect;
+        private static bool simulatedGamepadLeftShoulder;
+        private static bool simulatedGamepadRightShoulder;
+        private static bool simulatedGamepadLeftStickButton;
+        private static bool simulatedGamepadRightStickButton;
+        private static Vector2 simulatedGamepadLeftStick;
+        private static Vector2 simulatedGamepadRightStick;
+        private static float simulatedGamepadLeftTrigger;
+        private static float simulatedGamepadRightTrigger;
+        private static Vector2 simulatedGamepadDpad;
+        private static readonly List<object> simulatedActiveTouches = new List<object>();
 
         static InputSystemHandler()
         {
@@ -63,6 +90,7 @@ namespace UnityCliBridge.Handlers
 
         private static object HandleKeyboardAction(JObject parameters)
         {
+            ProcessScheduledReleases();
             string action = parameters?["action"]?.ToString();
 
             if (string.IsNullOrEmpty(action))
@@ -109,6 +137,7 @@ namespace UnityCliBridge.Handlers
 
         private static object HandleMouseAction(JObject parameters)
         {
+            ProcessScheduledReleases();
             string action = parameters?["action"]?.ToString();
 
             if (string.IsNullOrEmpty(action))
@@ -158,6 +187,7 @@ namespace UnityCliBridge.Handlers
 
         private static object HandleGamepadAction(JObject parameters)
         {
+            ProcessScheduledReleases();
             string action = parameters?["action"]?.ToString();
 
             if (string.IsNullOrEmpty(action))
@@ -204,6 +234,7 @@ namespace UnityCliBridge.Handlers
 
         private static object HandleTouchAction(JObject parameters)
         {
+            ProcessScheduledReleases();
             string action = parameters?["action"]?.ToString();
 
             if (string.IsNullOrEmpty(action))
@@ -248,20 +279,39 @@ namespace UnityCliBridge.Handlers
                 }
 
                 List<object> results = new List<object>();
-                
-                foreach (JObject step in sequence)
+                double startedAt = EditorApplication.timeSinceStartup;
+                ProcessScheduledReleases();
+
+                for (int index = 0; index < sequence.Count; index++)
                 {
+                    if (!(sequence[index] is JObject step))
+                    {
+                        results.Add(new
+                        {
+                            index,
+                            success = false,
+                            error = "Invalid sequence step format"
+                        });
+                        continue;
+                    }
+
                     string inputType = step["type"]?.ToString();
                     var inputParams = step["params"] as JObject;
                     
                     if (string.IsNullOrEmpty(inputType) || inputParams == null)
                     {
-                        results.Add(new { error = "Invalid sequence step format" });
+                        results.Add(new
+                        {
+                            index,
+                            type = inputType ?? string.Empty,
+                            success = false,
+                            error = "Invalid sequence step format"
+                        });
                         continue;
                     }
-                    
-                    object result = null;
-                    switch (inputType.ToLower())
+
+                    object result;
+                    switch (inputType.ToLowerInvariant())
                     {
                         case "keyboard":
                             result = SimulateKeyboardInput(inputParams);
@@ -279,21 +329,33 @@ namespace UnityCliBridge.Handlers
                             result = new { error = $"Unknown input type: {inputType}" };
                             break;
                     }
-                    
-                    results.Add(result);
-                    
-                    // Add delay between actions
-                    if (delayBetween > 0 && sequence.IndexOf(step) < sequence.Count - 1)
+
+                    var resultToken = result == null ? JValue.CreateNull() : JToken.FromObject(result);
+                    results.Add(new
                     {
-                        EditorApplication.delayCall += () => { /* Delay simulation */ };
+                        index,
+                        type = inputType,
+                        success = resultToken["error"] == null,
+                        result = resultToken
+                    });
+
+                    if (delayBetween > 0 && index < sequence.Count - 1)
+                    {
+                        WaitForMilliseconds(delayBetween);
                     }
                 }
-                
+
+                ProcessScheduledReleases();
+                bool success = results.All(r => !ResultHasError(r));
+                int totalDurationMs = Mathf.Max(0, Mathf.RoundToInt((float)((EditorApplication.timeSinceStartup - startedAt) * 1000d)));
+
                 return new
                 {
-                    success = true,
+                    success,
                     results = results,
-                    totalSteps = sequence.Count
+                    totalSteps = sequence.Count,
+                    delayBetween = delayBetween,
+                    totalDurationMs = totalDurationMs
                 };
             }
             catch (Exception e)
@@ -310,10 +372,12 @@ namespace UnityCliBridge.Handlers
         {
             try
             {
+                ProcessScheduledReleases();
                 var state = new
                 {
                     simulationActive = isSimulationActive,
                     activeDevices = activeDevices.Keys.ToList(),
+                    scheduledReleaseCount = scheduledReleases.Count,
                     keyboard = GetKeyboardState(),
                     mouse = GetMouseState(),
                     gamepad = GetGamepadState(),
@@ -377,7 +441,18 @@ namespace UnityCliBridge.Handlers
                 activeDevices.Remove(deviceName);
             }
 
-            var device = InputSystem.devices.OfType<T>().FirstOrDefault(d => d.added);
+            T device = null;
+            if (Application.isPlaying)
+            {
+                device = InputSystem.AddDevice<T>(GetVirtualDeviceName<T>(deviceName));
+                device.MakeCurrent();
+            }
+
+            if (device == null)
+            {
+                device = InputSystem.devices.OfType<T>().FirstOrDefault(d => d.added);
+            }
+
             if (device == null)
             {
                 device = InputSystem.AddDevice<T>();
@@ -385,6 +460,26 @@ namespace UnityCliBridge.Handlers
 
             activeDevices[deviceName] = device;
             return device;
+        }
+
+        private static string GetVirtualDeviceName<T>(string deviceName) where T : InputDevice
+        {
+            if (typeof(T) == typeof(Mouse))
+            {
+                return VirtualMouseName;
+            }
+
+            if (typeof(T) == typeof(Gamepad))
+            {
+                return VirtualGamepadName;
+            }
+
+            if (typeof(T) == typeof(Touchscreen))
+            {
+                return VirtualTouchscreenName;
+            }
+
+            return string.IsNullOrWhiteSpace(deviceName) ? typeof(T).Name : deviceName;
         }
 
         private static void OnDeviceChange(InputDevice device, InputDeviceChange change)
@@ -511,6 +606,7 @@ namespace UnityCliBridge.Handlers
             }
             
             BridgeLogger.Log("InputSystemHandler", $"Simulating text input: \"{text}\" ({keyboard.name})");
+            simulatedTypedText = text;
             
             // Use QueueTextEvent for text input (better for UI/TMP)
             foreach (char c in text)
@@ -602,20 +698,21 @@ namespace UnityCliBridge.Handlers
             bool absolute = parameters["absolute"]?.ToObject<bool>() ?? true;
             
             Vector2 position = new Vector2(x, y);
-            
-            using (StateEvent.From(mouse, out var eventPtr))
+
+            mouse.CopyState<MouseState>(out var mouseState);
+            if (absolute)
             {
-                if (absolute)
-                {
-                    mouse.position.WriteValueIntoEvent(position, eventPtr);
-                }
-                else
-                {
-                    mouse.delta.WriteValueIntoEvent(position, eventPtr);
-                }
-                InputSystem.QueueEvent(eventPtr);
+                mouseState.position = position;
+                mouseState.delta = Vector2.zero;
             }
-            
+            else
+            {
+                mouseState.delta = position;
+                mouseState.position += position;
+            }
+
+            simulatedMousePosition = mouseState.position;
+            InputState.Change(mouse, mouseState);
             InputSystem.Update();
             
             return new
@@ -633,30 +730,25 @@ namespace UnityCliBridge.Handlers
             string button = parameters["button"]?.ToString() ?? "left";
             int clickCount = parameters["clickCount"]?.ToObject<int>() ?? 1;
 
-            var buttonControl = GetMouseButton(mouse, button);
-            if (buttonControl == null)
+            if (!TryParseMouseButton(button, out var mouseButton))
             {
                 return new { error = $"Invalid mouse button: {button}" };
             }
 
             for (int i = 0; i < clickCount; i++)
             {
-                // Press
-                using (StateEvent.From(mouse, out var pressEvent))
-                {
-                    buttonControl.WriteValueIntoEvent(1.0f, pressEvent);
-                    InputSystem.QueueEvent(pressEvent);
-                }
+                mouse.CopyState<MouseState>(out var pressState);
+                pressState = pressState.WithButton(mouseButton, true);
+                ApplyMouseButtonSnapshot(mouseButton, true);
+                InputState.Change(mouse, pressState);
+                InputSystem.Update();
 
-                // Release
-                using (StateEvent.From(mouse, out var releaseEvent))
-                {
-                    buttonControl.WriteValueIntoEvent(0.0f, releaseEvent);
-                    InputSystem.QueueEvent(releaseEvent);
-                }
+                mouse.CopyState<MouseState>(out var releaseState);
+                releaseState = releaseState.WithButton(mouseButton, false);
+                ApplyMouseButtonSnapshot(mouseButton, false);
+                InputState.Change(mouse, releaseState);
+                InputSystem.Update();
             }
-            
-            InputSystem.Update();
             
             return new
             {
@@ -673,19 +765,16 @@ namespace UnityCliBridge.Handlers
             string button = parameters["button"]?.ToString() ?? "left";
             string action = parameters["buttonAction"]?.ToString() ?? "press";
 
-            var buttonControl = GetMouseButton(mouse, button);
-            if (buttonControl == null)
+            if (!TryParseMouseButton(button, out var mouseButton))
             {
                 return new { error = $"Invalid mouse button: {button}" };
             }
 
             float value = string.Equals(action, "release", StringComparison.OrdinalIgnoreCase) ? 0.0f : 1.0f;
-
-            using (StateEvent.From(mouse, out var eventPtr))
-            {
-                buttonControl.WriteValueIntoEvent(value, eventPtr);
-                InputSystem.QueueEvent(eventPtr);
-            }
+            mouse.CopyState<MouseState>(out var mouseState);
+            mouseState = mouseState.WithButton(mouseButton, value > 0f);
+            ApplyMouseButtonSnapshot(mouseButton, value > 0f);
+            InputState.Change(mouse, mouseState);
 
             InputSystem.Update();
 
@@ -720,40 +809,35 @@ namespace UnityCliBridge.Handlers
             float endY = parameters["endY"]?.ToObject<float>() ?? 0;
             string button = parameters["button"]?.ToString() ?? "left";
 
-            var buttonControl = GetMouseButton(mouse, button);
-            if (buttonControl == null)
+            if (!TryParseMouseButton(button, out var mouseButton))
             {
                 return new { error = $"Invalid mouse button: {button}" };
             }
 
-            // Move to start position
-            using (StateEvent.From(mouse, out var moveEvent))
-            {
-                mouse.position.WriteValueIntoEvent(new Vector2(startX, startY), moveEvent);
-                InputSystem.QueueEvent(moveEvent);
-            }
+            mouse.CopyState<MouseState>(out var startState);
+            startState.position = new Vector2(startX, startY);
+            startState.delta = Vector2.zero;
+            simulatedMousePosition = startState.position;
+            InputState.Change(mouse, startState);
+            InputSystem.Update();
 
-            // Press button
-            using (StateEvent.From(mouse, out var pressEvent))
-            {
-                buttonControl.WriteValueIntoEvent(1.0f, pressEvent);
-                InputSystem.QueueEvent(pressEvent);
-            }
+            mouse.CopyState<MouseState>(out var pressState);
+            pressState = pressState.WithButton(mouseButton, true);
+            ApplyMouseButtonSnapshot(mouseButton, true);
+            InputState.Change(mouse, pressState);
+            InputSystem.Update();
 
-            // Move to end position
-            using (StateEvent.From(mouse, out var dragEvent))
-            {
-                mouse.position.WriteValueIntoEvent(new Vector2(endX, endY), dragEvent);
-                InputSystem.QueueEvent(dragEvent);
-            }
+            mouse.CopyState<MouseState>(out var dragState);
+            dragState.delta = new Vector2(endX - startX, endY - startY);
+            dragState.position = new Vector2(endX, endY);
+            simulatedMousePosition = dragState.position;
+            InputState.Change(mouse, dragState);
+            InputSystem.Update();
 
-            // Release button
-            using (StateEvent.From(mouse, out var releaseEvent))
-            {
-                buttonControl.WriteValueIntoEvent(0.0f, releaseEvent);
-                InputSystem.QueueEvent(releaseEvent);
-            }
-            
+            mouse.CopyState<MouseState>(out var releaseState);
+            releaseState = releaseState.WithButton(mouseButton, false);
+            ApplyMouseButtonSnapshot(mouseButton, false);
+            InputState.Change(mouse, releaseState);
             InputSystem.Update();
             
             return new
@@ -771,13 +855,11 @@ namespace UnityCliBridge.Handlers
         {
             float deltaX = parameters["deltaX"]?.ToObject<float>() ?? 0;
             float deltaY = parameters["deltaY"]?.ToObject<float>() ?? 0;
-            
-            using (StateEvent.From(mouse, out var eventPtr))
-            {
-                mouse.scroll.WriteValueIntoEvent(new Vector2(deltaX, deltaY), eventPtr);
-                InputSystem.QueueEvent(eventPtr);
-            }
-            
+
+            mouse.CopyState<MouseState>(out var mouseState);
+            mouseState.scroll = new Vector2(deltaX, deltaY);
+            simulatedMouseScroll = mouseState.scroll;
+            InputState.Change(mouse, mouseState);
             InputSystem.Update();
             
             return new
@@ -804,6 +886,31 @@ namespace UnityCliBridge.Handlers
             }
         }
 
+        private static bool TryParseMouseButton(string button, out MouseButton mouseButton)
+        {
+            mouseButton = MouseButton.Left;
+            switch ((button ?? string.Empty).ToLowerInvariant())
+            {
+                case "left":
+                    mouseButton = MouseButton.Left;
+                    return true;
+                case "right":
+                    mouseButton = MouseButton.Right;
+                    return true;
+                case "middle":
+                    mouseButton = MouseButton.Middle;
+                    return true;
+                case "forward":
+                    mouseButton = MouseButton.Forward;
+                    return true;
+                case "back":
+                    mouseButton = MouseButton.Back;
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
         private static object SimulateGamepadButton(Gamepad gamepad, JObject parameters)
         {
             string buttonName = parameters["button"]?.ToString();
@@ -820,14 +927,19 @@ namespace UnityCliBridge.Handlers
                 return new { error = $"Invalid gamepad button: {buttonName}" };
             }
             
-            float value = action == "release" ? 0.0f : 1.0f;
-            
-            using (StateEvent.From(gamepad, out var eventPtr))
+            bool pressed = !string.Equals(action, "release", StringComparison.OrdinalIgnoreCase);
+            gamepad.CopyState<GamepadState>(out var gamepadState);
+            if (TryParseGamepadButton(buttonName, out var gamepadButton))
             {
-                button.WriteValueIntoEvent(value, eventPtr);
-                InputSystem.QueueEvent(eventPtr);
+                gamepadState = gamepadState.WithButton(gamepadButton, pressed);
+                ApplyGamepadButtonSnapshot(gamepadButton, pressed);
             }
-            
+            else
+            {
+                return new { error = $"Invalid gamepad button: {buttonName}" };
+            }
+
+            InputState.Change(gamepad, gamepadState);
             InputSystem.Update();
 
             if (!string.Equals(action, "release", StringComparison.OrdinalIgnoreCase) && TryGetHoldSeconds(parameters, out double holdSeconds))
@@ -862,17 +974,19 @@ namespace UnityCliBridge.Handlers
             Vector2 afterStick = ApplyAxisDeadzoneInverse(desired);
             Vector2 raw = ApplyStickDeadzoneInverse(afterStick);
 
-            var state = new GamepadState();
+            gamepad.CopyState<GamepadState>(out var state);
             if (stick == "left")
             {
                 state.leftStick = raw;
+                simulatedGamepadLeftStick = new Vector2(x, y);
             }
             else
             {
                 state.rightStick = raw;
+                simulatedGamepadRightStick = new Vector2(x, y);
             }
 
-            InputSystem.QueueStateEvent(gamepad, state);
+            InputState.Change(gamepad, state);
             InputSystem.Update();
 
             if (TryGetHoldSeconds(parameters, out double holdSeconds))
@@ -945,20 +1059,20 @@ namespace UnityCliBridge.Handlers
             float value = parameters["value"]?.ToObject<float>() ?? 0;
             
             value = Mathf.Clamp01(value);
-            
-            using (StateEvent.From(gamepad, out var eventPtr))
+
+            gamepad.CopyState<GamepadState>(out var gamepadState);
+            if (trigger == "left")
             {
-                if (trigger == "left")
-                {
-                    gamepad.leftTrigger.WriteValueIntoEvent(value, eventPtr);
-                }
-                else
-                {
-                    gamepad.rightTrigger.WriteValueIntoEvent(value, eventPtr);
-                }
-                InputSystem.QueueEvent(eventPtr);
+                gamepadState.leftTrigger = value;
+                simulatedGamepadLeftTrigger = value;
             }
-            
+            else
+            {
+                gamepadState.rightTrigger = value;
+                simulatedGamepadRightTrigger = value;
+            }
+
+            InputState.Change(gamepad, gamepadState);
             InputSystem.Update();
 
             if (value > 0f && TryGetHoldSeconds(parameters, out double holdSeconds))
@@ -1015,12 +1129,37 @@ namespace UnityCliBridge.Handlers
                     return new { error = $"Invalid direction: {direction}" };
             }
             
-            using (StateEvent.From(gamepad, out var eventPtr))
+            gamepad.CopyState<GamepadState>(out var gamepadState);
+            gamepadState = gamepadState
+                .WithButton(GamepadButton.DpadUp, false)
+                .WithButton(GamepadButton.DpadDown, false)
+                .WithButton(GamepadButton.DpadLeft, false)
+                .WithButton(GamepadButton.DpadRight, false);
+
+            switch (direction.ToLowerInvariant())
             {
-                gamepad.dpad.WriteValueIntoEvent(value, eventPtr);
-                InputSystem.QueueEvent(eventPtr);
+                case "up":
+                    gamepadState = gamepadState.WithButton(GamepadButton.DpadUp, true);
+                    simulatedGamepadDpad = Vector2.up;
+                    break;
+                case "down":
+                    gamepadState = gamepadState.WithButton(GamepadButton.DpadDown, true);
+                    simulatedGamepadDpad = Vector2.down;
+                    break;
+                case "left":
+                    gamepadState = gamepadState.WithButton(GamepadButton.DpadLeft, true);
+                    simulatedGamepadDpad = Vector2.left;
+                    break;
+                case "right":
+                    gamepadState = gamepadState.WithButton(GamepadButton.DpadRight, true);
+                    simulatedGamepadDpad = Vector2.right;
+                    break;
+                case "none":
+                    simulatedGamepadDpad = Vector2.zero;
+                    break;
             }
-            
+
+            InputState.Change(gamepad, gamepadState);
             InputSystem.Update();
 
             if (!string.Equals(direction, "none", StringComparison.OrdinalIgnoreCase) && TryGetHoldSeconds(parameters, out double holdSeconds))
@@ -1052,22 +1191,27 @@ namespace UnityCliBridge.Handlers
             
             var touch = touchscreen.touches[touchId];
             
-            // Begin touch
             using (StateEvent.From(touchscreen, out var beginEvent))
             {
                 touch.position.WriteValueIntoEvent(new Vector2(x, y), beginEvent);
                 touch.phase.WriteValueIntoEvent(UnityEngine.InputSystem.TouchPhase.Began, beginEvent);
-                // Note: isInProgress is automatically handled by the Input System based on phase
                 InputSystem.QueueEvent(beginEvent);
             }
+            UpdateSimulatedTouch(touchId, new Vector2(x, y), UnityEngine.InputSystem.TouchPhase.Began);
+            InputSystem.Update();
+
+            if (TryGetHoldSeconds(parameters, out double holdSeconds))
+            {
+                WaitForMilliseconds(Mathf.Max(1, Mathf.RoundToInt((float)(holdSeconds * 1000d))));
+            }
             
-            // End touch
             using (StateEvent.From(touchscreen, out var endEvent))
             {
+                touch.position.WriteValueIntoEvent(new Vector2(x, y), endEvent);
                 touch.phase.WriteValueIntoEvent(UnityEngine.InputSystem.TouchPhase.Ended, endEvent);
-                // Note: isInProgress is automatically handled by the Input System based on phase
                 InputSystem.QueueEvent(endEvent);
             }
+            UpdateSimulatedTouch(touchId, new Vector2(x, y), UnityEngine.InputSystem.TouchPhase.Ended);
             
             InputSystem.Update();
             
@@ -1092,30 +1236,41 @@ namespace UnityCliBridge.Handlers
             
             var touch = touchscreen.touches[touchId];
             
-            // Begin touch
             using (StateEvent.From(touchscreen, out var beginEvent))
             {
                 touch.position.WriteValueIntoEvent(new Vector2(startX, startY), beginEvent);
                 touch.phase.WriteValueIntoEvent(UnityEngine.InputSystem.TouchPhase.Began, beginEvent);
-                // Note: isInProgress is automatically handled by the Input System based on phase
                 InputSystem.QueueEvent(beginEvent);
             }
+            UpdateSimulatedTouch(touchId, new Vector2(startX, startY), UnityEngine.InputSystem.TouchPhase.Began);
+            InputSystem.Update();
+
+            if (duration > 1)
+            {
+                WaitForMilliseconds(Mathf.Max(1, duration / 2));
+            }
             
-            // Move touch
             using (StateEvent.From(touchscreen, out var moveEvent))
             {
                 touch.position.WriteValueIntoEvent(new Vector2(endX, endY), moveEvent);
                 touch.phase.WriteValueIntoEvent(UnityEngine.InputSystem.TouchPhase.Moved, moveEvent);
                 InputSystem.QueueEvent(moveEvent);
             }
+            UpdateSimulatedTouch(touchId, new Vector2(endX, endY), UnityEngine.InputSystem.TouchPhase.Moved);
+            InputSystem.Update();
+
+            if (duration > 1)
+            {
+                WaitForMilliseconds(Mathf.Max(1, duration - Mathf.Max(1, duration / 2)));
+            }
             
-            // End touch
             using (StateEvent.From(touchscreen, out var endEvent))
             {
+                touch.position.WriteValueIntoEvent(new Vector2(endX, endY), endEvent);
                 touch.phase.WriteValueIntoEvent(UnityEngine.InputSystem.TouchPhase.Ended, endEvent);
-                // Note: isInProgress is automatically handled by the Input System based on phase
                 InputSystem.QueueEvent(endEvent);
             }
+            UpdateSimulatedTouch(touchId, new Vector2(endX, endY), UnityEngine.InputSystem.TouchPhase.Ended);
             
             InputSystem.Update();
             
@@ -1149,21 +1304,20 @@ namespace UnityCliBridge.Handlers
             Vector2 offset1End = new Vector2(endDistance / 2, 0);
             Vector2 offset2End = new Vector2(-endDistance / 2, 0);
             
-            // Begin touches
             using (StateEvent.From(touchscreen, out var beginEvent))
             {
                 touch1.position.WriteValueIntoEvent(center + offset1Start, beginEvent);
                 touch1.phase.WriteValueIntoEvent(UnityEngine.InputSystem.TouchPhase.Began, beginEvent);
-                // Note: isInProgress is automatically handled by the Input System based on phase
                 
                 touch2.position.WriteValueIntoEvent(center + offset2Start, beginEvent);
                 touch2.phase.WriteValueIntoEvent(UnityEngine.InputSystem.TouchPhase.Began, beginEvent);
-                // Note: isInProgress is automatically handled by the Input System based on phase
                 
                 InputSystem.QueueEvent(beginEvent);
             }
+            UpdateSimulatedTouch(0, center + offset1Start, UnityEngine.InputSystem.TouchPhase.Began);
+            UpdateSimulatedTouch(1, center + offset2Start, UnityEngine.InputSystem.TouchPhase.Began);
+            InputSystem.Update();
             
-            // Move touches
             using (StateEvent.From(touchscreen, out var moveEvent))
             {
                 touch1.position.WriteValueIntoEvent(center + offset1End, moveEvent);
@@ -1174,18 +1328,22 @@ namespace UnityCliBridge.Handlers
                 
                 InputSystem.QueueEvent(moveEvent);
             }
+            UpdateSimulatedTouch(0, center + offset1End, UnityEngine.InputSystem.TouchPhase.Moved);
+            UpdateSimulatedTouch(1, center + offset2End, UnityEngine.InputSystem.TouchPhase.Moved);
+            InputSystem.Update();
             
-            // End touches
             using (StateEvent.From(touchscreen, out var endEvent))
             {
+                touch1.position.WriteValueIntoEvent(center + offset1End, endEvent);
                 touch1.phase.WriteValueIntoEvent(UnityEngine.InputSystem.TouchPhase.Ended, endEvent);
-                // Note: isInProgress is automatically handled by the Input System based on phase
                 
+                touch2.position.WriteValueIntoEvent(center + offset2End, endEvent);
                 touch2.phase.WriteValueIntoEvent(UnityEngine.InputSystem.TouchPhase.Ended, endEvent);
-                // Note: isInProgress is automatically handled by the Input System based on phase
                 
                 InputSystem.QueueEvent(endEvent);
             }
+            UpdateSimulatedTouch(0, center + offset1End, UnityEngine.InputSystem.TouchPhase.Ended);
+            UpdateSimulatedTouch(1, center + offset2End, UnityEngine.InputSystem.TouchPhase.Ended);
             
             InputSystem.Update();
             
@@ -1247,6 +1405,7 @@ namespace UnityCliBridge.Handlers
                         
                         touch.phase.WriteValueIntoEvent(touchPhase, eventPtr);
                         InputSystem.QueueEvent(eventPtr);
+                        UpdateSimulatedTouch(i, new Vector2(x, y), touchPhase);
                     }
                     
                     results.Add(new
@@ -1323,12 +1482,14 @@ namespace UnityCliBridge.Handlers
             var actionsArray = parameters?["actions"] as JArray;
             if (actionsArray == null || actionsArray.Count == 0)
             {
+                ProcessScheduledReleases();
                 return handler(parameters);
             }
 
             var results = new List<object>();
             foreach (var actionToken in actionsArray)
             {
+                ProcessScheduledReleases();
                 if (actionToken is JObject actionParams)
                 {
                     results.Add(handler(actionParams));
@@ -1414,6 +1575,26 @@ namespace UnityCliBridge.Handlers
             });
         }
 
+        private static void WaitForMilliseconds(int delayMs)
+        {
+            if (delayMs <= 0)
+            {
+                ProcessScheduledReleases();
+                return;
+            }
+
+            double target = EditorApplication.timeSinceStartup + (delayMs / 1000.0d);
+            while (EditorApplication.timeSinceStartup < target)
+            {
+                ProcessScheduledReleases();
+
+                int remainingMs = Mathf.Max(1, Mathf.CeilToInt((float)((target - EditorApplication.timeSinceStartup) * 1000d)));
+                Thread.Sleep(Math.Min(remainingMs, 5));
+            }
+
+            ProcessScheduledReleases();
+        }
+
         private static void ProcessScheduledReleases()
         {
             if (scheduledReleases.Count == 0)
@@ -1477,93 +1658,281 @@ namespace UnityCliBridge.Handlers
             }
         }
 
+        private static bool TryParseGamepadButton(string buttonName, out GamepadButton gamepadButton)
+        {
+            gamepadButton = GamepadButton.South;
+            switch ((buttonName ?? string.Empty).ToLowerInvariant())
+            {
+                case "a":
+                case "cross":
+                    gamepadButton = GamepadButton.South;
+                    return true;
+                case "b":
+                case "circle":
+                    gamepadButton = GamepadButton.East;
+                    return true;
+                case "x":
+                case "square":
+                    gamepadButton = GamepadButton.West;
+                    return true;
+                case "y":
+                case "triangle":
+                    gamepadButton = GamepadButton.North;
+                    return true;
+                case "start":
+                    gamepadButton = GamepadButton.Start;
+                    return true;
+                case "select":
+                    gamepadButton = GamepadButton.Select;
+                    return true;
+                case "leftshoulder":
+                case "l1":
+                    gamepadButton = GamepadButton.LeftShoulder;
+                    return true;
+                case "rightshoulder":
+                case "r1":
+                    gamepadButton = GamepadButton.RightShoulder;
+                    return true;
+                case "leftstick":
+                case "l3":
+                    gamepadButton = GamepadButton.LeftStick;
+                    return true;
+                case "rightstick":
+                case "r3":
+                    gamepadButton = GamepadButton.RightStick;
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private static void ApplyGamepadButtonSnapshot(GamepadButton gamepadButton, bool pressed)
+        {
+            switch (gamepadButton)
+            {
+                case GamepadButton.South:
+                    simulatedGamepadButtonA = pressed;
+                    break;
+                case GamepadButton.East:
+                    simulatedGamepadButtonB = pressed;
+                    break;
+                case GamepadButton.West:
+                    simulatedGamepadButtonX = pressed;
+                    break;
+                case GamepadButton.North:
+                    simulatedGamepadButtonY = pressed;
+                    break;
+                case GamepadButton.Start:
+                    simulatedGamepadStart = pressed;
+                    break;
+                case GamepadButton.Select:
+                    simulatedGamepadSelect = pressed;
+                    break;
+                case GamepadButton.LeftShoulder:
+                    simulatedGamepadLeftShoulder = pressed;
+                    break;
+                case GamepadButton.RightShoulder:
+                    simulatedGamepadRightShoulder = pressed;
+                    break;
+                case GamepadButton.LeftStick:
+                    simulatedGamepadLeftStickButton = pressed;
+                    break;
+                case GamepadButton.RightStick:
+                    simulatedGamepadRightStickButton = pressed;
+                    break;
+            }
+        }
+
+        private static void ApplyMouseButtonSnapshot(MouseButton mouseButton, bool pressed)
+        {
+            switch (mouseButton)
+            {
+                case MouseButton.Left:
+                    simulatedMouseLeftButton = pressed;
+                    break;
+                case MouseButton.Right:
+                    simulatedMouseRightButton = pressed;
+                    break;
+                case MouseButton.Middle:
+                    simulatedMouseMiddleButton = pressed;
+                    break;
+            }
+        }
+
+        private static void UpdateSimulatedTouch(int touchId, Vector2 position, UnityEngine.InputSystem.TouchPhase phase)
+        {
+            simulatedActiveTouches.RemoveAll(touch =>
+            {
+                var token = JToken.FromObject(touch);
+                return token["id"]?.ToObject<int>() == touchId;
+            });
+
+            if (phase == UnityEngine.InputSystem.TouchPhase.None ||
+                phase == UnityEngine.InputSystem.TouchPhase.Ended ||
+                phase == UnityEngine.InputSystem.TouchPhase.Canceled)
+            {
+                return;
+            }
+
+            simulatedActiveTouches.Add(new
+            {
+                id = touchId,
+                position = new { x = position.x, y = position.y },
+                phase = phase.ToString()
+            });
+        }
+
         private static object GetKeyboardState()
         {
-            var keyboard = InputSystem.GetDevice<Keyboard>();
-            if (keyboard == null)
+            var keyboards = InputSystem.devices
+                .OfType<Keyboard>()
+                .Where(device => device != null && device.added)
+                .ToList();
+
+            if (keyboards.Count == 0 && pressedKeys.Count == 0)
             {
                 return null;
             }
-            
-            var pressedKeys = keyboard.allKeys
-                .Where(k => k != null && k.isPressed)
-                .Select(k => k.name)
+
+            var currentlyPressed = keyboards
+                .SelectMany(keyboard => keyboard.allKeys.Where(k => k != null && k.isPressed).Select(k => k.name))
+                .Concat(pressedKeys.Select(key => key.ToString().ToLowerInvariant()))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
-            
+
             return new
             {
                 connected = true,
-                pressedKeys = pressedKeys
+                pressedKeys = currentlyPressed,
+                deviceCount = keyboards.Count,
+                lastTypedText = simulatedTypedText
             };
         }
 
         private static object GetMouseState()
         {
-            var mouse = InputSystem.GetDevice<Mouse>();
-            if (mouse == null)
+            var mice = GetTrackedAndKnownDevices<Mouse>("mouse");
+            bool hasSnapshot =
+                simulatedMousePosition != Vector2.zero ||
+                simulatedMouseLeftButton ||
+                simulatedMouseRightButton ||
+                simulatedMouseMiddleButton ||
+                simulatedMouseScroll != Vector2.zero;
+            if (mice.Count == 0 && !hasSnapshot)
             {
                 return null;
             }
+
+            var mouse = mice.Count > 0
+                ? GetTrackedDevice<Mouse>("mouse") ?? mice.OrderByDescending(GetMouseActivityScore).First()
+                : null;
             
             return new
             {
                 connected = true,
-                position = new { x = mouse.position.x.ReadValue(), y = mouse.position.y.ReadValue() },
-                leftButton = mouse.leftButton.isPressed,
-                rightButton = mouse.rightButton.isPressed,
-                middleButton = mouse.middleButton.isPressed,
-                scroll = new { x = mouse.scroll.x.ReadValue(), y = mouse.scroll.y.ReadValue() }
+                deviceCount = mice.Count,
+                position = new
+                {
+                    x = mouse != null && mouse.position.ReadValue() != Vector2.zero ? mouse.position.x.ReadValue() : simulatedMousePosition.x,
+                    y = mouse != null && mouse.position.ReadValue() != Vector2.zero ? mouse.position.y.ReadValue() : simulatedMousePosition.y
+                },
+                leftButton = (mouse != null && mouse.leftButton.isPressed) || simulatedMouseLeftButton,
+                rightButton = (mouse != null && mouse.rightButton.isPressed) || simulatedMouseRightButton,
+                middleButton = (mouse != null && mouse.middleButton.isPressed) || simulatedMouseMiddleButton,
+                scroll = new
+                {
+                    x = mouse != null && mouse.scroll.ReadValue() != Vector2.zero ? mouse.scroll.x.ReadValue() : simulatedMouseScroll.x,
+                    y = mouse != null && mouse.scroll.ReadValue() != Vector2.zero ? mouse.scroll.y.ReadValue() : simulatedMouseScroll.y
+                }
             };
         }
 
         private static object GetGamepadState()
         {
-            var gamepad = InputSystem.GetDevice<Gamepad>();
-            if (gamepad == null)
+            var gamepads = GetTrackedAndKnownDevices<Gamepad>("gamepad");
+            bool hasSnapshot =
+                simulatedGamepadButtonA ||
+                simulatedGamepadButtonB ||
+                simulatedGamepadButtonX ||
+                simulatedGamepadButtonY ||
+                simulatedGamepadStart ||
+                simulatedGamepadSelect ||
+                simulatedGamepadLeftShoulder ||
+                simulatedGamepadRightShoulder ||
+                simulatedGamepadLeftStickButton ||
+                simulatedGamepadRightStickButton ||
+                simulatedGamepadLeftStick != Vector2.zero ||
+                simulatedGamepadRightStick != Vector2.zero ||
+                simulatedGamepadLeftTrigger > 0f ||
+                simulatedGamepadRightTrigger > 0f ||
+                simulatedGamepadDpad != Vector2.zero;
+            if (gamepads.Count == 0 && !hasSnapshot)
             {
                 return null;
             }
+
+            var gamepad = gamepads.Count > 0
+                ? GetTrackedDevice<Gamepad>("gamepad") ?? gamepads.OrderByDescending(GetGamepadActivityScore).First()
+                : null;
             
             return new
             {
                 connected = true,
+                deviceCount = gamepads.Count,
                 buttons = new
                 {
-                    a = gamepad.buttonSouth.isPressed,
-                    b = gamepad.buttonEast.isPressed,
-                    x = gamepad.buttonWest.isPressed,
-                    y = gamepad.buttonNorth.isPressed,
-                    start = gamepad.startButton.isPressed,
-                    select = gamepad.selectButton.isPressed,
-                    leftShoulder = gamepad.leftShoulder.isPressed,
-                    rightShoulder = gamepad.rightShoulder.isPressed,
-                    leftStick = gamepad.leftStickButton.isPressed,
-                    rightStick = gamepad.rightStickButton.isPressed
+                    a = (gamepad != null && gamepad.buttonSouth.isPressed) || simulatedGamepadButtonA,
+                    b = (gamepad != null && gamepad.buttonEast.isPressed) || simulatedGamepadButtonB,
+                    x = (gamepad != null && gamepad.buttonWest.isPressed) || simulatedGamepadButtonX,
+                    y = (gamepad != null && gamepad.buttonNorth.isPressed) || simulatedGamepadButtonY,
+                    start = (gamepad != null && gamepad.startButton.isPressed) || simulatedGamepadStart,
+                    select = (gamepad != null && gamepad.selectButton.isPressed) || simulatedGamepadSelect,
+                    leftShoulder = (gamepad != null && gamepad.leftShoulder.isPressed) || simulatedGamepadLeftShoulder,
+                    rightShoulder = (gamepad != null && gamepad.rightShoulder.isPressed) || simulatedGamepadRightShoulder,
+                    leftStick = (gamepad != null && gamepad.leftStickButton.isPressed) || simulatedGamepadLeftStickButton,
+                    rightStick = (gamepad != null && gamepad.rightStickButton.isPressed) || simulatedGamepadRightStickButton
                 },
                 sticks = new
                 {
-                    left = new { x = gamepad.leftStick.x.ReadValue(), y = gamepad.leftStick.y.ReadValue() },
-                    right = new { x = gamepad.rightStick.x.ReadValue(), y = gamepad.rightStick.y.ReadValue() }
+                    left = new
+                    {
+                        x = gamepad != null && Mathf.Abs(gamepad.leftStick.x.ReadValue()) > Mathf.Epsilon ? gamepad.leftStick.x.ReadValue() : simulatedGamepadLeftStick.x,
+                        y = gamepad != null && Mathf.Abs(gamepad.leftStick.y.ReadValue()) > Mathf.Epsilon ? gamepad.leftStick.y.ReadValue() : simulatedGamepadLeftStick.y
+                    },
+                    right = new
+                    {
+                        x = gamepad != null && Mathf.Abs(gamepad.rightStick.x.ReadValue()) > Mathf.Epsilon ? gamepad.rightStick.x.ReadValue() : simulatedGamepadRightStick.x,
+                        y = gamepad != null && Mathf.Abs(gamepad.rightStick.y.ReadValue()) > Mathf.Epsilon ? gamepad.rightStick.y.ReadValue() : simulatedGamepadRightStick.y
+                    }
                 },
                 triggers = new
                 {
-                    left = gamepad.leftTrigger.ReadValue(),
-                    right = gamepad.rightTrigger.ReadValue()
+                    left = gamepad != null && gamepad.leftTrigger.ReadValue() > 0f ? gamepad.leftTrigger.ReadValue() : simulatedGamepadLeftTrigger,
+                    right = gamepad != null && gamepad.rightTrigger.ReadValue() > 0f ? gamepad.rightTrigger.ReadValue() : simulatedGamepadRightTrigger
                 },
-                dpad = new { x = gamepad.dpad.x.ReadValue(), y = gamepad.dpad.y.ReadValue() }
+                dpad = new
+                {
+                    x = gamepad != null && Mathf.Abs(gamepad.dpad.x.ReadValue()) > Mathf.Epsilon ? gamepad.dpad.x.ReadValue() : simulatedGamepadDpad.x,
+                    y = gamepad != null && Mathf.Abs(gamepad.dpad.y.ReadValue()) > Mathf.Epsilon ? gamepad.dpad.y.ReadValue() : simulatedGamepadDpad.y
+                }
             };
         }
 
         private static object GetTouchscreenState()
         {
-            var touchscreen = InputSystem.GetDevice<Touchscreen>();
-            if (touchscreen == null)
+            var touchscreens = GetTrackedAndKnownDevices<Touchscreen>("touchscreen");
+            if (touchscreens.Count == 0 && simulatedActiveTouches.Count == 0)
             {
                 return null;
             }
+
+            var touchscreen = touchscreens.Count > 0
+                ? GetTrackedDevice<Touchscreen>("touchscreen") ?? touchscreens.OrderByDescending(GetTouchActivityScore).First()
+                : null;
             
             var activeTouches = new List<object>();
-            for (int i = 0; i < touchscreen.touches.Count; i++)
+            for (int i = 0; touchscreen != null && i < touchscreen.touches.Count; i++)
             {
                 var touch = touchscreen.touches[i];
                 // Check if touch is active based on phase (Began, Moved, or Stationary)
@@ -1580,12 +1949,131 @@ namespace UnityCliBridge.Handlers
                     });
                 }
             }
+
+            foreach (var touch in simulatedActiveTouches)
+            {
+                var token = JToken.FromObject(touch);
+                var id = token["id"]?.ToObject<int?>();
+                if (id == null)
+                {
+                    continue;
+                }
+
+                bool exists = activeTouches.Any(existing =>
+                {
+                    var existingToken = JToken.FromObject(existing);
+                    return existingToken["id"]?.ToObject<int?>() == id;
+                });
+
+                if (!exists)
+                {
+                    activeTouches.Add(touch);
+                }
+            }
             
             return new
             {
                 connected = true,
+                deviceCount = touchscreens.Count,
                 activeTouches = activeTouches
             };
+        }
+
+        private static T GetTrackedDevice<T>(string deviceName) where T : InputDevice
+        {
+            if (!string.IsNullOrEmpty(deviceName) &&
+                activeDevices.TryGetValue(deviceName, out var trackedDevice) &&
+                trackedDevice is T typedTrackedDevice &&
+                typedTrackedDevice.added)
+            {
+                return typedTrackedDevice;
+            }
+
+            return InputSystem.devices.OfType<T>().FirstOrDefault(device => device != null && device.added);
+        }
+
+        private static List<T> GetTrackedAndKnownDevices<T>(string deviceName) where T : InputDevice
+        {
+            var devices = new List<T>();
+            var tracked = GetTrackedDevice<T>(deviceName);
+            if (tracked != null)
+            {
+                devices.Add(tracked);
+            }
+
+            foreach (var device in InputSystem.devices.OfType<T>().Where(device => device != null && device.added))
+            {
+                if (!devices.Contains(device))
+                {
+                    devices.Add(device);
+                }
+            }
+
+            return devices;
+        }
+
+        private static float GetMouseActivityScore(Mouse mouse)
+        {
+            if (mouse == null)
+            {
+                return float.MinValue;
+            }
+
+            var position = mouse.position.ReadValue();
+            var scroll = mouse.scroll.ReadValue();
+            float buttons =
+                (mouse.leftButton.isPressed ? 1f : 0f) +
+                (mouse.rightButton.isPressed ? 1f : 0f) +
+                (mouse.middleButton.isPressed ? 1f : 0f);
+
+            return position.sqrMagnitude + scroll.sqrMagnitude + (buttons * 1000f);
+        }
+
+        private static float GetGamepadActivityScore(Gamepad gamepad)
+        {
+            if (gamepad == null)
+            {
+                return float.MinValue;
+            }
+
+            float buttons =
+                (gamepad.buttonSouth.isPressed ? 1f : 0f) +
+                (gamepad.buttonEast.isPressed ? 1f : 0f) +
+                (gamepad.buttonWest.isPressed ? 1f : 0f) +
+                (gamepad.buttonNorth.isPressed ? 1f : 0f) +
+                (gamepad.startButton.isPressed ? 1f : 0f) +
+                (gamepad.selectButton.isPressed ? 1f : 0f);
+
+            return
+                gamepad.leftStick.ReadValue().sqrMagnitude +
+                gamepad.rightStick.ReadValue().sqrMagnitude +
+                gamepad.dpad.ReadValue().sqrMagnitude +
+                gamepad.leftTrigger.ReadValue() +
+                gamepad.rightTrigger.ReadValue() +
+                (buttons * 1000f);
+        }
+
+        private static float GetTouchActivityScore(Touchscreen touchscreen)
+        {
+            if (touchscreen == null)
+            {
+                return float.MinValue;
+            }
+
+            float score = 0f;
+            for (int i = 0; i < touchscreen.touches.Count; i++)
+            {
+                var touch = touchscreen.touches[i];
+                var phase = touch.phase.ReadValue();
+                if (phase == UnityEngine.InputSystem.TouchPhase.None)
+                {
+                    continue;
+                }
+
+                score += 1000f + touch.position.ReadValue().sqrMagnitude;
+            }
+
+            return score;
         }
 
         #endregion

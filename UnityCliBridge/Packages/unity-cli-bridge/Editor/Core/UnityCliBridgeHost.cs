@@ -85,8 +85,17 @@ namespace UnityCliBridge.Core
             try
             {
                 var settings = UnityCliBridgeProjectSettings.instance;
-                var host = settings != null ? settings.ResolvedUnityHost : "localhost";
-                var port = settings != null ? settings.ResolvedPort : DEFAULT_PORT;
+                var configuredHost = settings != null ? settings.ResolvedUnityHost : "localhost";
+                var configuredPort = settings != null ? settings.ResolvedPort : DEFAULT_PORT;
+                var resolved = ResolveHostAndPortForTesting(
+                    configuredHost,
+                    configuredPort,
+                    Environment.GetEnvironmentVariable("UNITY_CLI_HOST"),
+                    Environment.GetEnvironmentVariable("UNITY_CLI_PORT"),
+                    Environment.GetEnvironmentVariable("UNITY_CLI_PORT_OVERRIDE"));
+
+                var host = resolved.host;
+                var port = resolved.port;
 
                 currentHost = host;
                 currentPort = port;
@@ -100,24 +109,69 @@ namespace UnityCliBridge.Core
             }
         }
 
+        internal static (string host, int port) ResolveHostAndPortForTesting(
+            string configuredHost,
+            int configuredPort,
+            string envHostValue,
+            string envPortValue,
+            string envPortOverrideValue)
+        {
+            var host = string.IsNullOrWhiteSpace(envHostValue)
+                ? (string.IsNullOrWhiteSpace(configuredHost) ? "localhost" : configuredHost.Trim())
+                : envHostValue.Trim();
+
+            var port = configuredPort > 0 && configuredPort < 65536 ? configuredPort : DEFAULT_PORT;
+            var rawPort = !string.IsNullOrWhiteSpace(envPortOverrideValue) ? envPortOverrideValue : envPortValue;
+            if (!string.IsNullOrWhiteSpace(rawPort) && int.TryParse(rawPort, out var parsedPort) && parsedPort > 0 && parsedPort < 65536)
+            {
+                port = parsedPort;
+            }
+
+            return (host, port);
+        }
+
         private static bool ShouldSkipStartupForCurrentProcess()
         {
             var commandLine = Environment.CommandLine ?? string.Empty;
-            bool isBatchOrWorker =
-                Application.isBatchMode ||
-                commandLine.IndexOf("AssetImportWorker", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                commandLine.IndexOf("-adb2", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                commandLine.IndexOf("-batchMode", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                commandLine.IndexOf("-batchmode", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                commandLine.IndexOf("-runTests", StringComparison.OrdinalIgnoreCase) >= 0;
-
-            if (isBatchOrWorker)
+            var allowBatchHost = Environment.GetEnvironmentVariable("UNITY_CLI_ALLOW_BATCH_HOST");
+            if (ShouldSkipStartupForProcessForTesting(Application.isBatchMode, commandLine, allowBatchHost))
             {
                 BridgeLogger.Log("Skipping TCP listener startup in AssetImportWorker/batch/test process.");
                 return true;
             }
 
             return false;
+        }
+
+        internal static bool ShouldSkipStartupForProcessForTesting(bool isBatchMode, string commandLine, string allowBatchHostValue)
+        {
+            commandLine ??= string.Empty;
+
+            bool isWorkerOrTest =
+                commandLine.IndexOf("AssetImportWorker", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                commandLine.IndexOf("-adb2", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                commandLine.IndexOf("-runTests", StringComparison.OrdinalIgnoreCase) >= 0;
+
+            if (isWorkerOrTest)
+            {
+                return true;
+            }
+
+            bool isBatch =
+                isBatchMode ||
+                commandLine.IndexOf("-batchMode", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                commandLine.IndexOf("-batchmode", StringComparison.OrdinalIgnoreCase) >= 0;
+
+            if (!isBatch)
+            {
+                return false;
+            }
+
+            bool allowBatchHost =
+                string.Equals(allowBatchHostValue, "1", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(allowBatchHostValue, "true", StringComparison.OrdinalIgnoreCase);
+
+            return !allowBatchHost;
         }
 
         private static IPAddress ResolveBindAddress(string host)

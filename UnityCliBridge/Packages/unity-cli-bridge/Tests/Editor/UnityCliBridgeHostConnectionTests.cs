@@ -91,5 +91,66 @@ namespace UnityCliBridge.Tests.Editor
             Assert.IsFalse(success);
             Assert.IsNull(stream);
         }
+
+        [Test]
+        public void ShouldSkipStartupForProcessForTesting_ShouldSkipBatchWithoutOverride()
+        {
+            var result = BridgeHost.ShouldSkipStartupForProcessForTesting(
+                isBatchMode: true,
+                commandLine: "-batchmode -projectPath UnityCliBridge",
+                allowBatchHostValue: null);
+
+            Assert.IsTrue(result);
+        }
+
+        [Test]
+        public void ShouldSkipStartupForProcessForTesting_ShouldAllowBatchWithOverride()
+        {
+            var result = BridgeHost.ShouldSkipStartupForProcessForTesting(
+                isBatchMode: true,
+                commandLine: "-batchmode -projectPath UnityCliBridge",
+                allowBatchHostValue: "1");
+
+            Assert.IsFalse(result);
+        }
+
+        [Test]
+        public void ShouldSkipStartupForProcessForTesting_ShouldStillSkipRunTestsEvenWithOverride()
+        {
+            var result = BridgeHost.ShouldSkipStartupForProcessForTesting(
+                isBatchMode: true,
+                commandLine: "-batchmode -runTests -projectPath UnityCliBridge",
+                allowBatchHostValue: "true");
+
+            Assert.IsTrue(result);
+        }
+
+        [Test]
+        public void ResolveHostAndPortForTesting_ShouldPreferEnvironmentValues()
+        {
+            var result = BridgeHost.ResolveHostAndPortForTesting(
+                configuredHost: "localhost",
+                configuredPort: 6400,
+                envHostValue: "127.0.0.1",
+                envPortValue: "6500",
+                envPortOverrideValue: "6600");
+
+            Assert.AreEqual("127.0.0.1", result.host);
+            Assert.AreEqual(6600, result.port);
+        }
+
+        [Test]
+        public void ResolveHostAndPortForTesting_ShouldFallbackToConfiguredValuesWhenEnvInvalid()
+        {
+            var result = BridgeHost.ResolveHostAndPortForTesting(
+                configuredHost: "localhost",
+                configuredPort: 6400,
+                envHostValue: "",
+                envPortValue: "invalid",
+                envPortOverrideValue: null);
+
+            Assert.AreEqual("localhost", result.host);
+            Assert.AreEqual(6400, result.port);
+        }
     }
 }

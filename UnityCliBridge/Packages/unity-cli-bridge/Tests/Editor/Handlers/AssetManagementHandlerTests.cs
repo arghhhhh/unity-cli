@@ -397,6 +397,69 @@ namespace UnityCliBridge.Tests
             );
         }
 
+        [Test]
+        public void CreateMaterial_WithOverwriteTrue_ReplacesExistingMaterial()
+        {
+            string materialPath = TestFolder + "/Overwrite.mat";
+
+            JObject createInitial = ToJObject(AssetManagementHandler.CreateMaterial(new JObject
+            {
+                ["materialPath"] = materialPath,
+                ["shader"] = FindShaderName("Universal Render Pipeline/Lit", "Standard"),
+                ["properties"] = new JObject
+                {
+                    ["color"] = new JObject
+                    {
+                        ["r"] = 1f,
+                        ["g"] = 0f,
+                        ["b"] = 0f,
+                        ["a"] = 1f
+                    }
+                }
+            }));
+            Assert.IsNull(createInitial.Value<string>("error"));
+
+            JObject overwrite = ToJObject(AssetManagementHandler.CreateMaterial(new JObject
+            {
+                ["materialPath"] = materialPath,
+                ["shader"] = FindShaderName("Universal Render Pipeline/Unlit", "Unlit/Color"),
+                ["overwrite"] = true
+            }));
+
+            Assert.IsNull(overwrite.Value<string>("error"));
+            Assert.IsTrue(overwrite.Value<bool>("success"));
+
+            Material material = AssetDatabase.LoadAssetAtPath<Material>(materialPath);
+            Assert.IsNotNull(material);
+            StringAssert.Contains("Unlit", material.shader.name);
+        }
+
+        [Test]
+        public void ModifyMaterial_WithShaderOnly_Succeeds()
+        {
+            string materialPath = TestFolder + "/ShaderOnly.mat";
+            JObject created = ToJObject(AssetManagementHandler.CreateMaterial(new JObject
+            {
+                ["materialPath"] = materialPath,
+                ["shader"] = FindShaderName("Universal Render Pipeline/Lit", "Standard")
+            }));
+            Assert.IsNull(created.Value<string>("error"));
+
+            JObject modified = ToJObject(AssetManagementHandler.ModifyMaterial(new JObject
+            {
+                ["materialPath"] = materialPath,
+                ["shader"] = FindShaderName("Universal Render Pipeline/Unlit", "Unlit/Color")
+            }));
+
+            Assert.IsNull(modified.Value<string>("error"));
+            Assert.IsTrue(modified.Value<bool>("success"));
+            Assert.IsTrue(modified.Value<bool>("shaderChanged"));
+
+            Material material = AssetDatabase.LoadAssetAtPath<Material>(materialPath);
+            Assert.IsNotNull(material);
+            StringAssert.Contains("Unlit", material.shader.name);
+        }
+
         private static JObject ToJObject(object result)
         {
             return result as JObject ?? JObject.FromObject(result);
@@ -459,6 +522,20 @@ namespace UnityCliBridge.Tests
             return stateMachine.states
                 .Select(child => child.state)
                 .SingleOrDefault(state => state.name == stateName);
+        }
+
+        private static string FindShaderName(params string[] candidates)
+        {
+            foreach (string candidate in candidates)
+            {
+                if (!string.IsNullOrEmpty(candidate) && Shader.Find(candidate) != null)
+                {
+                    return candidate;
+                }
+            }
+
+            Assert.Fail("Expected at least one test shader to exist.");
+            return null;
         }
     }
 }
