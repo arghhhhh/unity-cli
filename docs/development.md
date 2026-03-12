@@ -189,6 +189,18 @@ cargo build --release
 # Smoke E2E
 scripts/e2e-test.sh
 
+# Deterministic input simulation E2E
+scripts/e2e-input-tools.sh
+
+# Headless batch-host input simulation E2E
+scripts/e2e-input-batch-host.sh
+
+# Recommended local path when no Unity GUI listener is already running
+scripts/e2e-input-batch-host.sh --port 6402
+
+# The batch-host helper uses the editor version in ProjectVersion.txt by default
+# and only needs UNITY_PATH when that editor is not installed locally.
+
 # Full local E2E sweep
 scripts/e2e-all-tools.sh
 
@@ -632,6 +644,18 @@ cargo build --release
 
 # スモークE2E
 scripts/e2e-test.sh
+
+# 入力シミュレーション決定的 E2E
+scripts/e2e-input-tools.sh
+
+# headless batch host 入力 E2E
+scripts/e2e-input-batch-host.sh
+
+# Unity GUI listener が無い場合の推奨経路
+scripts/e2e-input-batch-host.sh --port 6402
+
+# 既定では ProjectVersion.txt の Unity を使う。
+# その editor が未インストールのときだけ UNITY_PATH を上書きする。
 
 # フルローカルE2E
 scripts/e2e-all-tools.sh
