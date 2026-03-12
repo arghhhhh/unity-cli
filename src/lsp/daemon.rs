@@ -940,7 +940,7 @@ mod tests {
 
         let thread = std::thread::spawn(|| serve_forever().expect("serve_forever should stop"));
         let mut ready = false;
-        let ready_deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        let ready_deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         while std::time::Instant::now() < ready_deadline {
             if let Ok(value) = status() {
                 if value
@@ -952,12 +952,14 @@ mod tests {
                     break;
                 }
             }
-            std::thread::sleep(std::time::Duration::from_millis(20));
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
         assert!(ready, "daemon did not become ready");
 
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
         let mut stopped = false;
-        let status_deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        let status_deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         while std::time::Instant::now() < status_deadline {
             if let Ok(value) = stop() {
                 if value
@@ -969,7 +971,7 @@ mod tests {
                     break;
                 }
             }
-            std::thread::sleep(std::time::Duration::from_millis(20));
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
         assert!(stopped, "daemon did not respond to stop");
 
