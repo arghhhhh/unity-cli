@@ -842,6 +842,32 @@ mod tests {
     }
 
     #[test]
+    fn daemon_response_round_trip_preserves_timing() {
+        let response = DaemonResponse {
+            ok: true,
+            result: Some(json!({"pong": true})),
+            error: None,
+            timing: Some(RemoteCommandTiming {
+                connect_ms: Some(1.25),
+                transport: crate::core::command_stats::TransportTiming {
+                    send_ms: 0.25,
+                    read_ms: 0.5,
+                    normalize_ms: 0.75,
+                    total_ms: 1.5,
+                },
+            }),
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        let parsed: DaemonResponse = serde_json::from_str(&json).unwrap();
+        let timing = parsed.timing.expect("timing should be preserved");
+        assert_eq!(timing.connect_ms, Some(1.25));
+        assert_eq!(timing.transport.send_ms, 0.25);
+        assert_eq!(timing.transport.read_ms, 0.5);
+        assert_eq!(timing.transport.normalize_ms, 0.75);
+        assert_eq!(timing.transport.total_ms, 1.5);
+    }
+
+    #[test]
     fn tools_dir_creates_directory() {
         let _guard = env_lock()
             .lock()
@@ -1008,6 +1034,63 @@ mod tests {
 
         let ping_err = ping().expect_err("ping should fail when daemon is absent");
         assert!(!format!("{ping_err:#}").is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn try_call_tool_with_timing_returns_daemon_timing() {
+        let _guard = env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let home = tempdir().expect("tempdir should succeed");
+        let _home = EnvVarGuard::set(
+            "HOME",
+            home.path()
+                .to_str()
+                .expect("tempdir path should be valid UTF-8"),
+        );
+
+        let response_json = serde_json::to_string(&DaemonResponse {
+            ok: true,
+            result: Some(json!({"pong": true})),
+            error: None,
+            timing: Some(RemoteCommandTiming {
+                connect_ms: Some(1.5),
+                transport: crate::core::command_stats::TransportTiming {
+                    send_ms: 0.25,
+                    read_ms: 0.5,
+                    normalize_ms: 0.75,
+                    total_ms: 1.5,
+                },
+            }),
+        })
+        .expect("response serialization should succeed");
+        let server = spawn_unix_server_once(&response_json);
+
+        let config = RuntimeConfig {
+            host: "127.0.0.1".to_string(),
+            port: 6400,
+            timeout: Duration::from_millis(500),
+        };
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime should build");
+        let outcome = runtime
+            .block_on(try_call_tool_with_timing("ping", &json!({}), &config))
+            .expect("daemon tool call should succeed");
+
+        assert_eq!(outcome.value["pong"], true);
+        assert!(outcome.daemon_roundtrip_ms >= 0.0);
+        let timing = outcome.timing.expect("timing should be returned");
+        assert_eq!(timing.connect_ms, Some(1.5));
+        assert_eq!(timing.transport.send_ms, 0.25);
+        assert_eq!(timing.transport.read_ms, 0.5);
+        assert_eq!(timing.transport.normalize_ms, 0.75);
+        assert_eq!(timing.transport.total_ms, 1.5);
+
+        server.join().expect("server thread should join");
     }
 
     #[cfg(unix)]
