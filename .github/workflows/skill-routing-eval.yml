@@ -19,7 +19,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: skill-static-report-nightly
-          path: specs/perf/skill-static-report.json
+          path: .unity/skill-eval/skill-static-report.json
           retention-days: 30
 
   llm-routing:
@@ -51,7 +51,7 @@ jobs:
         with:
           name: skill-routing-eval
           path: |
-            specs/perf/skill-routing-summary.json
-            specs/perf/skill-routing-history.jsonl
-            specs/perf/skill-routing-benchmark.jsonl
+            .unity/skill-eval/skill-routing-summary.json
+            .unity/skill-eval/skill-routing-history.jsonl
+            tests/fixtures/skill-routing/benchmark.jsonl
           retention-days: 30

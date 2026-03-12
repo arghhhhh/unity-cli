@@ -53,7 +53,6 @@ gh api repos/akiojin/unity-cli/branches/develop/protection -X PUT \
 | develop | `Markdown & Commitlint` | `lint.yml` |
 | develop | `Rust Tests (required)` | `test.yml` |
 | develop | `LSP Tests (required)` | `test.yml` |
-| develop | `Verify specs/specs.md is up-to-date` | `specs-readme.yml` |
 
 ## 適用確認
 

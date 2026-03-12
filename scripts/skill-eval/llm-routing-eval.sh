@@ -5,9 +5,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-BENCHMARK_PATH="${REPO_ROOT}/specs/perf/skill-routing-benchmark.jsonl"
-HISTORY_PATH="${REPO_ROOT}/specs/perf/skill-routing-history.jsonl"
-SUMMARY_PATH="${REPO_ROOT}/specs/perf/skill-routing-summary.json"
+BENCHMARK_PATH="${REPO_ROOT}/tests/fixtures/skill-routing/benchmark.jsonl"
+HISTORY_PATH="${REPO_ROOT}/.unity/skill-eval/skill-routing-history.jsonl"
+SUMMARY_PATH="${REPO_ROOT}/.unity/skill-eval/skill-routing-summary.json"
 PREDICTIONS_PATH=""
 RUNNER_CMD=""
 MODEL="unknown"

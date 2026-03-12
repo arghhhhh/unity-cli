@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 SKILLS_DIR="${REPO_ROOT}/.claude-plugin/plugins/unity-cli/skills"
 CATALOG_FILE="${REPO_ROOT}/src/tooling/tool_catalog.rs"
-REPORT_PATH="${REPO_ROOT}/specs/perf/skill-static-report.json"
+REPORT_PATH="${REPO_ROOT}/.unity/skill-eval/skill-static-report.json"
 JSON_OUTPUT=0
 
 usage() {
@@ -17,7 +17,7 @@ Usage: scripts/skill-eval/static-skill-contract-check.sh [options]
 Options:
   --skills-dir <path>   Skills directory (default: .claude-plugin/plugins/unity-cli/skills)
   --catalog <path>      Rust tool catalog file (default: src/tooling/tool_catalog.rs)
-  --report <path>       JSON report path (default: specs/perf/skill-static-report.json)
+  --report <path>       JSON report path (default: .unity/skill-eval/skill-static-report.json)
   --json                Print JSON report to stdout
 USAGE
 }

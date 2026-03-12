@@ -60,36 +60,20 @@
 ### 更新対象（必須）
 
 - `docs/constitution.md`（正本）
-- `.specify/memory/constitution.md`（Spec Kit用ミラー）
 - `CLAUDE.md`（参照先・運用ルール）
 - `README.md`（導線・配布説明）
-- `templates/plan-template.md`
-- `.specify/templates/plan-template.md`
-- `.claude/commands/speckit.plan.md`
-- `.claude/commands/speckit.analyze.md`
-- `.claude/commands/speckit.constitution.md`
-
-### 仕様テンプレに影響がある場合
-
-- `.specify/templates/spec-template.md`
-- `.specify/templates/tasks-template.md`
-- `templates/spec-template.md`
-- `templates/tasks-template.md`
+- `CONTRIBUTING.md`（Issue-first 運用）
+- `docs/development.md`（開発フロー説明）
 
 ### バリデーション
 
 ```bash
-# 憲章ミラー同期
-bash scripts/sync-constitution.sh
-bash scripts/sync-constitution.sh --check
-
-# 古い参照の確認
-rg -n "(^|\\s)/memory/constitution\\.md" -S --hidden .
-rg -n "(^|\\s)memory/constitution\\.md" -S --hidden .
+# Speckit / local specs の残骸確認
+rg -n "\\.specify|speckit\\.|specs/" --hidden .
 ```
 
-更新時は、`docs/constitution.md` の version / 日付、および plan-template フッターの version を一致させる。
+更新時は、`docs/constitution.md` の version / 日付を実際の変更内容に合わせて更新する。
 
-**バージョン**: 2.1.0  
+**バージョン**: 2.2.0
 **制定日**: 2025-10-17  
-**最終改定**: 2026-03-06
+**最終改定**: 2026-03-13

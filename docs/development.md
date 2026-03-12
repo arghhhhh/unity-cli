@@ -10,7 +10,7 @@ This document covers internal development workflow for `unity-cli`.
 - Unity bridge package: `UnityCliBridge/Packages/unity-cli-bridge`
 - Unity test project: `UnityCliBridge`
 - C# LSP: `lsp/`
-- Spec workflow: GitHub Issue-first (`gwt-spec`) + `.specify/` tooling
+- Spec workflow: GitHub Issue-first (`gwt-spec`) only
 
 ## Prerequisites
 
@@ -332,13 +332,13 @@ These are guidance values and vary by host:
 ./scripts/perf-media-benchmark.sh
 
 # Stored history file
-cat specs/perf/lsp-history.jsonl | tail -n 5
+cat .unity/perf/lsp-history.jsonl | tail -n 5
 ```
 
 Regression policy:
 
 1. Track JSON outputs over time.
-2. Keep `specs/perf/lsp-history.jsonl` as append-only history.
+2. Keep `.unity/perf/lsp-history.jsonl` as append-only history.
 3. Use recorded trends as baseline comparison input.
 4. Exclude `system ping` from strict regression gate (depends on Unity availability and machine/network state).
 5. Use `scripts/perf-media-benchmark.sh` only for runtime screenshot / video / profiler evidence alongside `get_command_stats`; it is not part of the LSP history pipeline.
@@ -347,9 +347,9 @@ Regression policy:
 
 Benchmark and history files:
 
-- `specs/perf/skill-routing-benchmark.jsonl` (routing benchmark: 120 cases)
-- `specs/perf/skill-routing-history.jsonl` (append-only eval history)
-- `specs/perf/skill-static-report.json` (latest static contract report)
+- `tests/fixtures/skill-routing/benchmark.jsonl` (routing benchmark: 120 cases)
+- `.unity/skill-eval/skill-routing-history.jsonl` (append-only eval history)
+- `.unity/skill-eval/skill-static-report.json` (latest static contract report)
 
 Run static validation (required in PR CI):
 
@@ -380,39 +380,6 @@ Current thresholds:
 - `tool_correct >= 0.92`
 - `payload_valid >= 0.95`
 
-## Speckit Upgrade Runbook
-
-When upgrading GitHub Spec Kit project files:
-
-1. Fetch upstream snapshot:
-
-```bash
-bash scripts/upgrade-speckit.sh --tag <TAG>
-```
-
-1. Compare and selectively apply:
-
-```bash
-git diff --no-index .specify/templates .specify/upstream/spec-kit-<TAG>/templates
-git diff --no-index .specify/scripts/bash .specify/upstream/spec-kit-<TAG>/scripts/bash
-```
-
-1. Preserve repository invariants:
-
-- Japanese localization for `.claude/commands/speckit.*.md` and `.specify/templates/*`
-- No branch/worktree creation in Speckit flow
-- Use GitHub Issue number as SPEC ID (`gwt-spec` label)
-- Do not create new `specs/SPEC-*` directories
-
-1. Validate:
-
-```bash
-bash -n .specify/scripts/bash/*.sh
-bash .specify/scripts/bash/update-specs-readme.sh --quiet
-bash .specify/scripts/checks/check-speckit-commands.sh
-bash scripts/sync-constitution.sh --check
-```
-
 ## Release Flow
 
 1. Run `./scripts/publish.sh <major|minor|patch>`
@@ -422,24 +389,16 @@ bash scripts/sync-constitution.sh --check
 
 Detailed steps: `RELEASE.md`.
 
-## Spec Kit
-
-- Source of truth: `docs/constitution.md`
-- Mirror for Spec Kit: `.specify/memory/constitution.md`
-- Spec generation:
-  - `/speckit.specify`
-  - `/speckit.plan`
-  - `/speckit.tasks`
-
 ## Documentation Consistency Checks
 
-Periodically verify that specs and docs match the current implementation.
+Periodically verify that docs and issue-first workflow references match the current implementation.
 
 ### Check Targets
 
 | Directory / File | Contents |
 | ------------------ | ---------- |
-| `specs/` | Design specs (architecture, migration notes) |
+| `docs/architecture.md` | Architecture overview |
+| `docs/migration-notes.md` | Migration and deprecation notes |
 | `docs/` | Development guide and constitution |
 | `README.md` | Project overview |
 | `UnityCliBridge/Packages/unity-cli-bridge/README.md` | UPM package docs (EN) |
@@ -450,10 +409,10 @@ Periodically verify that specs and docs match the current implementation.
 1. **Legacy name residuals**: Search for unintentional `MCP` or old project name references.
 
    ```bash
-   grep -rni "mcp" specs/ docs/ README.md | grep -v migration-notes.md
+   grep -rni "mcp" docs/ README.md | grep -v migration-notes.md
    ```
 
-   - `specs/migration-notes.md` intentionally contains old names for migration/deprecation documentation.
+   - `docs/migration-notes.md` intentionally contains old names for migration/deprecation documentation.
 
 2. **Environment variable consistency**: Compare the variables listed in this document with `src/config.rs`.
 
@@ -462,7 +421,7 @@ Periodically verify that specs and docs match the current implementation.
    grep -oE 'UNITY_CLI_[A-Z_]+' docs/development.md | sort -u
    ```
 
-3. **Source file structure**: Verify `specs/architecture.md` file list matches actual sources.
+3. **Source file structure**: Verify `docs/architecture.md` file list matches actual sources.
 
    ```bash
    ls src/*.rs
@@ -478,7 +437,7 @@ Periodically verify that specs and docs match the current implementation.
 
 ## Baseline Policy
 
-The Unity-side codebase uses `unity-mcp-server` as its base copy. Differences are limited to changes required for the MCP → CLI migration. For migration policy and diff notes, see [`specs/migration-notes.md`](../specs/migration-notes.md).
+The Unity-side codebase uses `unity-mcp-server` as its base copy. Differences are limited to changes required for the MCP → CLI migration. For migration policy and diff notes, see [`docs/migration-notes.md`](./migration-notes.md).
 
 ---
 
@@ -492,7 +451,7 @@ The Unity-side codebase uses `unity-mcp-server` as its base copy. Differences ar
 - Unity連携パッケージ: `UnityCliBridge/Packages/unity-cli-bridge`
 - Unityテストプロジェクト: `UnityCliBridge`
 - C# LSP: `lsp/`
-- Specワークフロー: GitHub Issue-first（`gwt-spec`）+ `.specify/` 補助ツール
+- Specワークフロー: GitHub Issue-first（`gwt-spec`）のみ
 
 ## 前提条件
 
@@ -699,7 +658,7 @@ scripts/perf-media-benchmark.sh
 - `scripts/perf-media-benchmark.sh` は `Tools/Unity CLI/Performance/Generate Media Perf Scene` 経由で `Assets/Scenes/Generated/E2E/Performance/UnityCli_PerfBenchmark.unity` を生成する。
 - 出力 artifact は `UnityCliBridge/.unity/perf-media/<timestamp>/` に保存する。
 - 保存対象は `get_command_stats`、`profiler_start` / `profiler_stop`、`capture_screenshot`、`capture_video_start` / `capture_video_status` / `capture_video_stop`。
-- 確認対象は `summary.md` と `result.json`。LSP の履歴ファイル `specs/perf/lsp-history.jsonl` には追記しない。
+- 確認対象は `summary.md` と `result.json`。LSP の履歴ファイル `.unity/perf/lsp-history.jsonl` には追記しない。
 
 ## トラブルシューティング
 
@@ -804,13 +763,13 @@ unity-cli tool list --host 127.0.0.1 --port 6400 --output json | jq -r '.[]'
 ./scripts/perf-media-benchmark.sh
 
 # 保存済み履歴の確認
-cat specs/perf/lsp-history.jsonl | tail -n 5
+cat .unity/perf/lsp-history.jsonl | tail -n 5
 ```
 
 回帰判定方針:
 
 1. JSON 結果を継続保存する
-2. `specs/perf/lsp-history.jsonl` を追記履歴として維持する
+2. `.unity/perf/lsp-history.jsonl` を追記履歴として維持する
 3. 履歴トレンドをベースライン比較に利用する
 4. `system ping` は Unity の可用性に依存するため厳密ゲートには含めない
 5. スクリーンショット / 動画 / Profiler の回帰確認には `scripts/perf-media-benchmark.sh` を使い、`get_command_stats` の結果も合わせて保存する。ただし LSP 履歴パイプラインには含めない
@@ -819,9 +778,9 @@ cat specs/perf/lsp-history.jsonl | tail -n 5
 
 ベンチマーク・履歴ファイル:
 
-- `specs/perf/skill-routing-benchmark.jsonl`（ルーティング評価ベンチマーク: 120ケース）
-- `specs/perf/skill-routing-history.jsonl`（追記専用の評価履歴）
-- `specs/perf/skill-static-report.json`（最新の静的契約チェック結果）
+- `tests/fixtures/skill-routing/benchmark.jsonl`（ルーティング評価ベンチマーク: 120ケース）
+- `.unity/skill-eval/skill-routing-history.jsonl`（追記専用の評価履歴）
+- `.unity/skill-eval/skill-static-report.json`（最新の静的契約チェック結果）
 
 静的検証（PR CI 必須）:
 
@@ -852,39 +811,6 @@ cat specs/perf/lsp-history.jsonl | tail -n 5
 - `tool_correct >= 0.92`
 - `payload_valid >= 0.95`
 
-## Speckit 更新手順（要約）
-
-GitHub Spec Kit の上流更新を取り込むときは次を実施します。
-
-1. 上流スナップショット取得:
-
-```bash
-bash scripts/upgrade-speckit.sh --tag <TAG>
-```
-
-1. 差分確認:
-
-```bash
-git diff --no-index .specify/templates .specify/upstream/spec-kit-<TAG>/templates
-git diff --no-index .specify/scripts/bash .specify/upstream/spec-kit-<TAG>/scripts/bash
-```
-
-1. 不変条件を維持:
-
-- `.claude/commands/speckit.*.md` と `.specify/templates/*` の日本語維持
-- Speckit フローでブランチ/worktree を作成しない
-- SPEC ID は GitHub Issue 番号（`gwt-spec`）
-- 新規 `specs/SPEC-*` ディレクトリは作成しない
-
-1. 検証:
-
-```bash
-bash -n .specify/scripts/bash/*.sh
-bash .specify/scripts/bash/update-specs-readme.sh --quiet
-bash .specify/scripts/checks/check-speckit-commands.sh
-bash scripts/sync-constitution.sh --check
-```
-
 ## リリースフロー
 
 1. `./scripts/publish.sh <major|minor|patch>` を実行
@@ -896,13 +822,14 @@ bash scripts/sync-constitution.sh --check
 
 ## ドキュメント整合チェック
 
-仕様書・ドキュメントが現行の実装と矛盾していないことを定期的に確認します。
+ドキュメントと Issue-first 運用が現行の実装と矛盾していないことを定期的に確認します。
 
 ### チェック対象
 
 | ディレクトリ / ファイル | 内容 |
 | ------------------------ | ------ |
-| `specs/` | 設計仕様書（アーキテクチャ、移行記録） |
+| `docs/architecture.md` | アーキテクチャ概要 |
+| `docs/migration-notes.md` | 移行と廃止の記録 |
 | `docs/` | 開発ガイドと憲章 |
 | `README.md` | プロジェクト概要 |
 | `UnityCliBridge/Packages/unity-cli-bridge/README.md` | UPM パッケージドキュメント（英語） |
@@ -913,7 +840,7 @@ bash scripts/sync-constitution.sh --check
 1. **旧名称の残留確認**: 以下のコマンドで `MCP` や旧プロジェクト名の残留をチェックします。
 
    ```bash
-   grep -rni "mcp" specs/ docs/ README.md | grep -v migration-notes.md
+   grep -rni "mcp" docs/ README.md | grep -v migration-notes.md
    ```
 
 2. **環境変数の整合確認**: 本ドキュメントの変数一覧と `src/config.rs` の実装を比較します。
@@ -923,7 +850,7 @@ bash scripts/sync-constitution.sh --check
    grep -oE 'UNITY_CLI_[A-Z_]+' docs/development.md | sort -u
    ```
 
-3. **ソースファイル構成の確認**: `specs/architecture.md` のソースファイル一覧と実際のファイルを比較します。
+3. **ソースファイル構成の確認**: `docs/architecture.md` のソースファイル一覧と実際のファイルを比較します。
 
    ```bash
    ls src/*.rs
@@ -939,4 +866,4 @@ bash scripts/sync-constitution.sh --check
 
 ## ベースライン方針
 
-Unity 側コードベースは `unity-mcp-server` をベースコピーとし、差分は MCP→CLI 移行に必要な変更に限定します。方針と差分の記録は [`specs/migration-notes.md`](../specs/migration-notes.md) を参照してください。
+Unity 側コードベースは `unity-mcp-server` をベースコピーとし、差分は MCP→CLI 移行に必要な変更に限定します。方針と差分の記録は [`docs/migration-notes.md`](./migration-notes.md) を参照してください。

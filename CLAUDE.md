@@ -103,7 +103,7 @@ dotnet test lsp/Server.Tests.csproj
 
 - `gwt-spec` ラベル付き Issue の本文（`Spec` / `Plan` / `Tasks` / `TDD`）
 - SPEC ID は `SPEC-xxxxxxxx` ではなく Issue 番号を使う
-- 新規の `specs/SPEC-*` ディレクトリは作成しない
+- ローカル spec ディレクトリは作成しない
 - 実装完了の宣言は、Issue 本文の `Tasks` が実態どおりに更新され、受け入れ基準が満たされてから行う
 
 ## リリース
@@ -119,5 +119,4 @@ dotnet test lsp/Server.Tests.csproj
 - `lsp/`: C# LSP
 - `UnityCliBridge/Packages/unity-cli-bridge/`: Unity UPM package
 - `docs/`: 運用ドキュメント
-- `.specify/`: Spec Kit テンプレート・補助スクリプト
-- `specs/`: アーキテクチャ/移行ノートなどの設計ドキュメント
+- `tests/fixtures/`: 評価・検証用の固定入力
