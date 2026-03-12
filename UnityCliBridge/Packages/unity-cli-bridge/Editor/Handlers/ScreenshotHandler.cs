@@ -1,8 +1,11 @@
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using UnityEngine;
 using UnityEditor;
 using Newtonsoft.Json.Linq;
+using UnityCliBridge.Core;
 using UnityCliBridge.Logging;
 
 namespace UnityCliBridge.Handlers
@@ -12,6 +15,30 @@ namespace UnityCliBridge.Handlers
     /// </summary>
     public static class ScreenshotHandler
     {
+        private sealed class TimedCaptureOutcome
+        {
+            public JObject Payload { get; }
+            public Dictionary<string, double> Timings { get; }
+
+            public TimedCaptureOutcome(JObject payload, Dictionary<string, double> timings)
+            {
+                Payload = payload;
+                Timings = timings ?? new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+            }
+        }
+
+        private sealed class TimedImageBytes
+        {
+            public byte[] ImageBytes { get; }
+            public Dictionary<string, double> Timings { get; }
+
+            public TimedImageBytes(byte[] imageBytes, Dictionary<string, double> timings)
+            {
+                ImageBytes = imageBytes;
+                Timings = timings ?? new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+            }
+        }
+
         /// <summary>
         /// Captures a screenshot from the Unity Editor
         /// </summary>
@@ -31,32 +58,32 @@ namespace UnityCliBridge.Handlers
                 // Validate capture mode
                 if (!IsValidCaptureMode(captureMode))
                 {
-                    return new { error = "Invalid capture mode. Must be 'game', 'scene', or 'window'" };
+                    return CreateError("Invalid capture mode. Must be 'game', 'scene', or 'window'");
                 }
                 
-                // 保存先は固定: <workspace>/.unity/captures/image_<mode>_<timestamp>.png
+                // 保存先は固定: <unityProjectRoot>/.unity/captures/image_<mode>_<timestamp>.png
                 {
                     string timestamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
                     var projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
-                    var wsParam = parameters["workspaceRoot"]?.ToString();
-                    string workspaceRoot = (!string.IsNullOrEmpty(wsParam) && IsLocalPath(wsParam))
-                        ? wsParam
-                        : ResolveWorkspaceRoot(projectRoot);
-                    var captureDir = Path.Combine(workspaceRoot, ".unity", "captures");
+                    var captureDir = Path.Combine(projectRoot, ".unity", "captures");
                     outputPath = Path.Combine(captureDir, $"image_{captureMode}_{timestamp}.png");
                     outputPath = outputPath.Replace('\\', '/');
                 }
                 
+                var timings = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+
                 // Ensure directory exists (support outside Assets)
                 string directory = Path.GetDirectoryName(outputPath);
                 if (!Directory.Exists(directory))
                 {
+                    var ioStopwatch = Stopwatch.StartNew();
                     Directory.CreateDirectory(directory);
-                    UnityCliBridge.Helpers.DebouncedAssetRefresh.Request();
+                    ioStopwatch.Stop();
+                    timings["ioMs"] = ioStopwatch.Elapsed.TotalMilliseconds;
                 }
                 
                 // Capture based on mode
-                object result = null;
+                TimedCaptureOutcome result = null;
                 switch (captureMode)
                 {
                     case "game":
@@ -73,83 +100,41 @@ namespace UnityCliBridge.Handlers
                         result = CaptureExplorerView(outputPath, explorerSettings, encodeAsBase64);
                         break;
                 }
-                
-                return result;
+
+                if (result == null)
+                {
+                    return CreateError("Failed to capture screenshot: unsupported capture mode");
+                }
+
+                MergeTimings(result.Timings, timings);
+                return AttachTimings(result.Payload, result.Timings);
             }
             catch (Exception ex)
             {
                 BridgeLogger.LogError("ScreenshotHandler", $"Error capturing screenshot: {ex.Message}");
-                return new { error = $"Failed to capture screenshot: {ex.Message}" };
+                return CreateError($"Failed to capture screenshot: {ex.Message}");
             }
         }
 
-        private static string ResolveWorkspaceRoot(string projectRoot)
-        {
-            try
-            {
-                // 現在のプロジェクト直下から親方向に最大3階層まで探索
-                string dir = projectRoot;
-                for (int i = 0; i < 3; i++)
-                {
-                    var unityDir = Path.Combine(dir, ".unity");
-                    if (Directory.Exists(unityDir)) return dir.Replace('\\', '/');
-                    var parent = Directory.GetParent(dir);
-                    if (parent == null) break;
-                    dir = parent.FullName;
-                }
-            }
-            catch { }
-            return projectRoot.Replace('\\', '/');
-        }
-
-
-        private static bool IsLocalPath(string path)
-        {
-            if (string.IsNullOrEmpty(path)) return false;
-            if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(
-                    System.Runtime.InteropServices.OSPlatform.Windows))
-            {
-                // Windows: "/foo" (UNC でない Unix 絶対パス) を拒否
-                if (path.StartsWith("/") && (path.Length < 2 || path[1] != '/'))
-                    return false;
-            }
-            else
-            {
-                // Unix: "C:\\..." や "D:/" などの Windows パスを拒否
-                if (path.Length >= 2 && char.IsLetter(path[0]) && path[1] == ':')
-                    return false;
-            }
-            return true;
-        }
-
-        private static bool PathsEqual(string a, string b)
-        {
-            try
-            {
-                var na = Path.GetFullPath(a).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-                var nb = Path.GetFullPath(b).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-                return string.Equals(na, nb, StringComparison.OrdinalIgnoreCase);
-            }
-            catch { return string.Equals(a, b, StringComparison.OrdinalIgnoreCase); }
-        }
-        
         /// <summary>
         /// Captures the Game View
         /// </summary>
-        private static object CaptureGameView(string outputPath, int width, int height, bool includeUI, bool encodeAsBase64)
+        private static TimedCaptureOutcome CaptureGameView(string outputPath, int width, int height, bool includeUI, bool encodeAsBase64)
         {
             try
             {
+                var timings = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
                 BridgeLogger.Log("ScreenshotHandler", $"CaptureGameView called: path={outputPath}, width={width}, height={height}");
                 
                 // Try to capture from main camera if in Play Mode
                 if (EditorApplication.isPlaying && Camera.main != null)
                 {
                     BridgeLogger.Log("ScreenshotHandler", "Using main camera in Play Mode");
-                    return CaptureFromCamera(Camera.main, outputPath, width, height, "game", encodeAsBase64);
+                    return CaptureFromCamera(Camera.main, outputPath, width, height, "game", includeUI, encodeAsBase64);
                 }
                 
                 // Otherwise try to get Game View and capture it
+                var prepareStopwatch = Stopwatch.StartNew();
                 BridgeLogger.Log("ScreenshotHandler", "Getting Game View window");
                 var gameViewType = typeof(Editor).Assembly.GetType("UnityEditor.GameView");
                 var gameView = EditorWindow.GetWindow(gameViewType, false);
@@ -157,7 +142,9 @@ namespace UnityCliBridge.Handlers
                 if (gameView == null)
                 {
                     BridgeLogger.LogError("ScreenshotHandler", "Game View not found");
-                    return new { error = "Game View not found. Please open the Game View window." };
+                    return new TimedCaptureOutcome(
+                        CreateError("Game View not found. Please open the Game View window."),
+                        timings);
                 }
                 
                 // Focus the Game View
@@ -168,16 +155,22 @@ namespace UnityCliBridge.Handlers
                 var renderSize = GetGameViewRenderSize(gameView);
                 int captureWidth = width > 0 ? width : renderSize.x;
                 int captureHeight = height > 0 ? height : renderSize.y;
+                prepareStopwatch.Stop();
+                timings["prepareMs"] = prepareStopwatch.Elapsed.TotalMilliseconds;
                 BridgeLogger.Log("ScreenshotHandler", $"Capture size: {captureWidth}x{captureHeight}");
                 
                 // Create RenderTexture and capture
                 BridgeLogger.Log("ScreenshotHandler", "Calling CaptureWindowImmediate");
-                byte[] imageBytes = CaptureWindowImmediate(captureWidth, captureHeight);
+                var captureBytes = CaptureWindowImmediate(captureWidth, captureHeight);
+                MergeTimings(timings, captureBytes.Timings);
+                byte[] imageBytes = captureBytes.ImageBytes;
                 
                 if (imageBytes == null || imageBytes.Length == 0)
                 {
                     BridgeLogger.LogError("ScreenshotHandler", "CaptureWindowImmediate returned null or empty data");
-                    return new { error = "Failed to capture Game View - no image data" };
+                    return new TimedCaptureOutcome(
+                        CreateError("Failed to capture Game View - no image data"),
+                        timings);
                 }
                 
                 BridgeLogger.Log("ScreenshotHandler", $"Image data captured: {imageBytes.Length} bytes");
@@ -192,18 +185,22 @@ namespace UnityCliBridge.Handlers
                 
                 // Save to file
                 BridgeLogger.Log("ScreenshotHandler", $"Writing file to: {outputPath}");
+                var ioStopwatch = Stopwatch.StartNew();
                 File.WriteAllBytes(outputPath, imageBytes);
+                ioStopwatch.Stop();
+                AddTiming(timings, "ioMs", ioStopwatch.Elapsed.TotalMilliseconds);
                 
                 if (!File.Exists(outputPath))
                 {
                     BridgeLogger.LogError("ScreenshotHandler", $"File was not created at: {outputPath}");
-                    return new { error = "Failed to capture screenshot - file not created" };
+                    return new TimedCaptureOutcome(
+                        CreateError("Failed to capture screenshot - file not created"),
+                        timings);
                 }
                 
                 BridgeLogger.Log("ScreenshotHandler", $"File created successfully: {outputPath}");
-                UnityCliBridge.Helpers.DebouncedAssetRefresh.Request();
                 
-                var result = new
+                var result = JObject.FromObject(new
                 {
                     path = outputPath,
                     width = captureWidth,
@@ -212,44 +209,38 @@ namespace UnityCliBridge.Handlers
                     includeUI = includeUI,
                     fileSize = imageBytes.Length,
                     message = "Game View screenshot captured successfully"
-                };
+                });
                 
                 // Add base64 if requested
                 if (encodeAsBase64)
                 {
-                    return new
-                    {
-                        result.path,
-                        result.width,
-                        result.height,
-                        result.captureMode,
-                        result.includeUI,
-                        result.fileSize,
-                        result.message,
-                        base64Data = Convert.ToBase64String(imageBytes)
-                    };
+                    result["base64Data"] = Convert.ToBase64String(imageBytes);
                 }
                 
-                return result;
+                return new TimedCaptureOutcome(result, timings);
             }
             catch (Exception ex)
             {
-                return new { error = $"Failed to capture Game View: {ex.Message}" };
+                return new TimedCaptureOutcome(CreateError($"Failed to capture Game View: {ex.Message}"), null);
             }
         }
         
         /// <summary>
         /// Captures the Scene View
         /// </summary>
-        private static object CaptureSceneView(string outputPath, int width, int height, bool encodeAsBase64)
+        private static TimedCaptureOutcome CaptureSceneView(string outputPath, int width, int height, bool encodeAsBase64)
         {
             try
             {
+                var timings = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+                var prepareStopwatch = Stopwatch.StartNew();
                 // Get the Scene View
                 SceneView sceneView = SceneView.lastActiveSceneView;
                 if (sceneView == null)
                 {
-                    return new { error = "Scene View not found. Please open a Scene View window." };
+                    return new TimedCaptureOutcome(
+                        CreateError("Scene View not found. Please open a Scene View window."),
+                        timings);
                 }
                 
                 // Focus the Scene View
@@ -259,14 +250,17 @@ namespace UnityCliBridge.Handlers
                 Camera sceneCamera = sceneView.camera;
                 if (sceneCamera == null)
                 {
-                    return new { error = "Scene View camera not available" };
+                    return new TimedCaptureOutcome(CreateError("Scene View camera not available"), timings);
                 }
                 
                 // Determine capture resolution
                 int captureWidth = width > 0 ? width : (int)sceneView.position.width;
                 int captureHeight = height > 0 ? height : (int)sceneView.position.height;
+                prepareStopwatch.Stop();
+                timings["prepareMs"] = prepareStopwatch.Elapsed.TotalMilliseconds;
                 
                 // Create render texture
+                var captureStopwatch = Stopwatch.StartNew();
                 RenderTexture renderTexture = new RenderTexture(captureWidth, captureHeight, 24);
                 sceneCamera.targetTexture = renderTexture;
                 
@@ -283,16 +277,23 @@ namespace UnityCliBridge.Handlers
                 sceneCamera.targetTexture = null;
                 RenderTexture.active = null;
                 UnityEngine.Object.DestroyImmediate(renderTexture);
+                captureStopwatch.Stop();
+                timings["captureMs"] = captureStopwatch.Elapsed.TotalMilliseconds;
                 
                 // Encode to PNG
+                var encodeStopwatch = Stopwatch.StartNew();
                 byte[] imageBytes = screenshot.EncodeToPNG();
+                encodeStopwatch.Stop();
+                timings["encodeMs"] = encodeStopwatch.Elapsed.TotalMilliseconds;
                 UnityEngine.Object.DestroyImmediate(screenshot);
                 
                 // Save to file
+                var ioStopwatch = Stopwatch.StartNew();
                 File.WriteAllBytes(outputPath, imageBytes);
-                UnityCliBridge.Helpers.DebouncedAssetRefresh.Request();
+                ioStopwatch.Stop();
+                AddTiming(timings, "ioMs", ioStopwatch.Elapsed.TotalMilliseconds);
                 
-                var result = new
+                var result = JObject.FromObject(new
                 {
                     path = outputPath,
                     width = captureWidth,
@@ -302,43 +303,32 @@ namespace UnityCliBridge.Handlers
                     cameraPosition = new { x = sceneCamera.transform.position.x, y = sceneCamera.transform.position.y, z = sceneCamera.transform.position.z },
                     cameraRotation = new { x = sceneCamera.transform.eulerAngles.x, y = sceneCamera.transform.eulerAngles.y, z = sceneCamera.transform.eulerAngles.z },
                     message = "Scene View screenshot captured successfully"
-                };
+                });
                 
                 // Add base64 if requested
                 if (encodeAsBase64)
                 {
-                    return new
-                    {
-                        result.path,
-                        result.width,
-                        result.height,
-                        result.captureMode,
-                        result.fileSize,
-                        result.cameraPosition,
-                        result.cameraRotation,
-                        result.message,
-                        base64Data = Convert.ToBase64String(imageBytes)
-                    };
+                    result["base64Data"] = Convert.ToBase64String(imageBytes);
                 }
                 
-                return result;
+                return new TimedCaptureOutcome(result, timings);
             }
             catch (Exception ex)
             {
-                return new { error = $"Failed to capture Scene View: {ex.Message}" };
+                return new TimedCaptureOutcome(CreateError($"Failed to capture Scene View: {ex.Message}"), null);
             }
         }
         
         /// <summary>
         /// Captures a specific Editor Window
         /// </summary>
-        private static object CaptureEditorWindow(string outputPath, string windowName, bool encodeAsBase64)
+        private static TimedCaptureOutcome CaptureEditorWindow(string outputPath, string windowName, bool encodeAsBase64)
         {
             try
             {
                 if (string.IsNullOrEmpty(windowName))
                 {
-                    return new { error = "windowName is required for window capture mode" };
+                    return new TimedCaptureOutcome(CreateError("windowName is required for window capture mode"), null);
                 }
                 
                 // Find the window
@@ -356,7 +346,7 @@ namespace UnityCliBridge.Handlers
                 
                 if (targetWindow == null)
                 {
-                    return new { error = $"Window '{windowName}' not found" };
+                    return new TimedCaptureOutcome(CreateError($"Window '{windowName}' not found"), null);
                 }
                 
                 // Focus the window
@@ -368,24 +358,28 @@ namespace UnityCliBridge.Handlers
                 
                 // Note: Direct window capture is limited in Unity Editor
                 // This is a placeholder for the approach
-                return new { error = "Direct window capture is not fully supported. Use 'game' or 'scene' mode instead." };
+                return new TimedCaptureOutcome(
+                    CreateError("Direct window capture is not fully supported. Use 'game' or 'scene' mode instead."),
+                    new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase));
             }
             catch (Exception ex)
             {
-                return new { error = $"Failed to capture window: {ex.Message}" };
+                return new TimedCaptureOutcome(CreateError($"Failed to capture window: {ex.Message}"), null);
             }
         }
         
         /// <summary>
         /// Captures using LLM Explorer mode - allows AI to explore the scene freely
         /// </summary>
-        private static object CaptureExplorerView(string outputPath, JObject explorerSettings, bool encodeAsBase64)
+        private static TimedCaptureOutcome CaptureExplorerView(string outputPath, JObject explorerSettings, bool encodeAsBase64)
         {
             try
             {
+                var timings = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
                 BridgeLogger.Log("ScreenshotHandler", "CaptureExplorerView called");
                 
                 // Parse explorer settings
+                var prepareStopwatch = Stopwatch.StartNew();
                 JObject targetSettings = explorerSettings?["target"] as JObject;
                 JObject cameraSettings = explorerSettings?["camera"] as JObject;
                 JObject displaySettings = explorerSettings?["display"] as JObject;
@@ -519,8 +513,11 @@ namespace UnityCliBridge.Handlers
                     // Determine capture resolution
                     int width = cameraSettings?["width"]?.ToObject<int>() ?? 1920;
                     int height = cameraSettings?["height"]?.ToObject<int>() ?? 1080;
+                    prepareStopwatch.Stop();
+                    timings["prepareMs"] = prepareStopwatch.Elapsed.TotalMilliseconds;
                     
                     // Create render texture and capture
+                    var captureStopwatch = Stopwatch.StartNew();
                     RenderTexture renderTexture = new RenderTexture(width, height, 24);
                     explorerCamera.targetTexture = renderTexture;
                     explorerCamera.Render();
@@ -535,16 +532,23 @@ namespace UnityCliBridge.Handlers
                     RenderTexture.active = null;
                     explorerCamera.targetTexture = null;
                     UnityEngine.Object.DestroyImmediate(renderTexture);
+                    captureStopwatch.Stop();
+                    timings["captureMs"] = captureStopwatch.Elapsed.TotalMilliseconds;
                     
                     // Encode to PNG
+                    var encodeStopwatch = Stopwatch.StartNew();
                     byte[] imageBytes = screenshot.EncodeToPNG();
+                    encodeStopwatch.Stop();
+                    timings["encodeMs"] = encodeStopwatch.Elapsed.TotalMilliseconds;
                     UnityEngine.Object.DestroyImmediate(screenshot);
                     
                     // Save to file
+                    var ioStopwatch = Stopwatch.StartNew();
                     File.WriteAllBytes(outputPath, imageBytes);
-                    UnityCliBridge.Helpers.DebouncedAssetRefresh.Request();
+                    ioStopwatch.Stop();
+                    AddTiming(timings, "ioMs", ioStopwatch.Elapsed.TotalMilliseconds);
                     
-                    var result = new
+                    var result = JObject.FromObject(new
                     {
                         path = outputPath,
                         width = width,
@@ -554,26 +558,15 @@ namespace UnityCliBridge.Handlers
                         cameraPosition = new { x = explorerCamera.transform.position.x, y = explorerCamera.transform.position.y, z = explorerCamera.transform.position.z },
                         cameraRotation = new { x = explorerCamera.transform.eulerAngles.x, y = explorerCamera.transform.eulerAngles.y, z = explorerCamera.transform.eulerAngles.z },
                         message = "Explorer view screenshot captured successfully"
-                    };
+                    });
                     
                     // Add base64 if requested
                     if (encodeAsBase64)
                     {
-                        return new
-                        {
-                            result.path,
-                            result.width,
-                            result.height,
-                            result.captureMode,
-                            result.fileSize,
-                            result.cameraPosition,
-                            result.cameraRotation,
-                            result.message,
-                            base64Data = Convert.ToBase64String(imageBytes)
-                        };
+                        result["base64Data"] = Convert.ToBase64String(imageBytes);
                     }
                     
-                    return result;
+                    return new TimedCaptureOutcome(result, timings);
                 }
                 finally
                 {
@@ -587,7 +580,7 @@ namespace UnityCliBridge.Handlers
             catch (Exception ex)
             {
                 BridgeLogger.LogError("ScreenshotHandler", $"Error in CaptureExplorerView: {ex.Message}");
-                return new { error = $"Failed to capture explorer view: {ex.Message}" };
+                return new TimedCaptureOutcome(CreateError($"Failed to capture explorer view: {ex.Message}"), null);
             }
         }
         
@@ -830,15 +823,27 @@ namespace UnityCliBridge.Handlers
         /// <summary>
         /// Captures from a specific camera using RenderTexture
         /// </summary>
-        private static object CaptureFromCamera(Camera camera, string outputPath, int width, int height, string captureMode, bool encodeAsBase64)
+        private static TimedCaptureOutcome CaptureFromCamera(
+            Camera camera,
+            string outputPath,
+            int width,
+            int height,
+            string captureMode,
+            bool includeUI,
+            bool encodeAsBase64)
         {
             try
             {
+                var timings = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+                var prepareStopwatch = Stopwatch.StartNew();
                 // Determine capture resolution
                 int captureWidth = width > 0 ? width : camera.pixelWidth;
                 int captureHeight = height > 0 ? height : camera.pixelHeight;
+                prepareStopwatch.Stop();
+                timings["prepareMs"] = prepareStopwatch.Elapsed.TotalMilliseconds;
                 
                 // Create RenderTexture
+                var captureStopwatch = Stopwatch.StartNew();
                 RenderTexture renderTexture = new RenderTexture(captureWidth, captureHeight, 24);
                 RenderTexture previousTarget = camera.targetTexture;
                 
@@ -855,9 +860,14 @@ namespace UnityCliBridge.Handlers
                 // Restore camera settings
                 camera.targetTexture = previousTarget;
                 RenderTexture.active = null;
+                captureStopwatch.Stop();
+                timings["captureMs"] = captureStopwatch.Elapsed.TotalMilliseconds;
                 
                 // Encode to PNG
+                var encodeStopwatch = Stopwatch.StartNew();
                 byte[] imageBytes = screenshot.EncodeToPNG();
+                encodeStopwatch.Stop();
+                timings["encodeMs"] = encodeStopwatch.Elapsed.TotalMilliseconds;
                 
                 // Cleanup
                 UnityEngine.Object.DestroyImmediate(renderTexture);
@@ -865,43 +875,37 @@ namespace UnityCliBridge.Handlers
                 
                 if (imageBytes == null || imageBytes.Length == 0)
                 {
-                    return new { error = "Failed to encode screenshot" };
+                    return new TimedCaptureOutcome(CreateError("Failed to encode screenshot"), timings);
                 }
                 
                 // Save to file
+                var ioStopwatch = Stopwatch.StartNew();
                 File.WriteAllBytes(outputPath, imageBytes);
-                UnityCliBridge.Helpers.DebouncedAssetRefresh.Request();
+                ioStopwatch.Stop();
+                AddTiming(timings, "ioMs", ioStopwatch.Elapsed.TotalMilliseconds);
                 
-                var result = new
+                var result = JObject.FromObject(new
                 {
                     path = outputPath,
                     width = captureWidth,
                     height = captureHeight,
                     captureMode = captureMode,
+                    includeUI = includeUI,
                     fileSize = imageBytes.Length,
                     message = $"Screenshot captured successfully from {camera.name}"
-                };
+                });
                 
                 // Add base64 if requested
                 if (encodeAsBase64)
                 {
-                    return new
-                    {
-                        result.path,
-                        result.width,
-                        result.height,
-                        result.captureMode,
-                        result.fileSize,
-                        result.message,
-                        base64Data = Convert.ToBase64String(imageBytes)
-                    };
+                    result["base64Data"] = Convert.ToBase64String(imageBytes);
                 }
                 
-                return result;
+                return new TimedCaptureOutcome(result, timings);
             }
             catch (Exception ex)
             {
-                return new { error = $"Failed to capture from camera: {ex.Message}" };
+                return new TimedCaptureOutcome(CreateError($"Failed to capture from camera: {ex.Message}"), null);
             }
         }
         
@@ -946,13 +950,15 @@ namespace UnityCliBridge.Handlers
         /// <summary>
         /// Captures the current window immediately using screen capture
         /// </summary>
-        private static byte[] CaptureWindowImmediate(int width, int height)
+        private static TimedImageBytes CaptureWindowImmediate(int width, int height)
         {
             try
             {
+                var timings = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
                 BridgeLogger.Log("ScreenshotHandler", $"CaptureWindowImmediate called: {width}x{height}");
                 
                 // Create a render texture for immediate capture
+                var captureStopwatch = Stopwatch.StartNew();
                 RenderTexture renderTexture = new RenderTexture(width, height, 24);
                 BridgeLogger.Log("ScreenshotHandler", "RenderTexture created");
                 
@@ -995,7 +1001,7 @@ namespace UnityCliBridge.Handlers
                     BridgeLogger.LogError("ScreenshotHandler", "No camera available for capture");
                     // No camera available, return null
                     UnityEngine.Object.DestroyImmediate(renderTexture);
-                    return null;
+                    return new TimedImageBytes(null, timings);
                 }
                 
                 // Read pixels
@@ -1008,9 +1014,14 @@ namespace UnityCliBridge.Handlers
                 // Cleanup render texture
                 RenderTexture.active = null;
                 UnityEngine.Object.DestroyImmediate(renderTexture);
+                captureStopwatch.Stop();
+                timings["captureMs"] = captureStopwatch.Elapsed.TotalMilliseconds;
                 
                 // Encode to PNG
+                var encodeStopwatch = Stopwatch.StartNew();
                 byte[] imageBytes = screenshot.EncodeToPNG();
+                encodeStopwatch.Stop();
+                timings["encodeMs"] = encodeStopwatch.Elapsed.TotalMilliseconds;
                 UnityEngine.Object.DestroyImmediate(screenshot);
                 
                 if (imageBytes != null && imageBytes.Length > 0)
@@ -1022,14 +1033,87 @@ namespace UnityCliBridge.Handlers
                     BridgeLogger.LogError("ScreenshotHandler", "PNG encoding failed or returned empty data");
                 }
                 
-                return imageBytes;
+                return new TimedImageBytes(imageBytes, timings);
             }
             catch (Exception ex)
             {
                 BridgeLogger.LogError("ScreenshotHandler", $"Failed to capture window immediately: {ex.Message}");
                 BridgeLogger.LogError("ScreenshotHandler", $"Stack trace: {ex.StackTrace}");
-                return null;
+                return new TimedImageBytes(null, null);
             }
+        }
+
+        private static JObject CreateError(string message)
+        {
+            return new JObject
+            {
+                ["error"] = message
+            };
+        }
+
+        private static JObject AttachTimings(JObject payload, IDictionary<string, double> timings)
+        {
+            if (payload == null || timings == null || timings.Count == 0)
+            {
+                return payload;
+            }
+
+            foreach (var pair in timings)
+            {
+                if (string.IsNullOrWhiteSpace(pair.Key) || double.IsNaN(pair.Value) || double.IsInfinity(pair.Value) || pair.Value < 0)
+                {
+                    continue;
+                }
+
+                BridgeCommandStats.RecordStageDuration(ToStageKey(pair.Key), pair.Value);
+            }
+
+            return payload;
+        }
+
+        private static string ToStageKey(string key)
+        {
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                return key;
+            }
+
+            var trimmed = key.Trim();
+            if (trimmed.EndsWith("Ms", StringComparison.OrdinalIgnoreCase))
+            {
+                trimmed = trimmed.Substring(0, trimmed.Length - 2);
+            }
+
+            return trimmed.Replace(" ", "_").ToLowerInvariant() + "_ms";
+        }
+
+        private static void MergeTimings(IDictionary<string, double> target, IDictionary<string, double> source)
+        {
+            if (target == null || source == null)
+            {
+                return;
+            }
+
+            foreach (var pair in source)
+            {
+                AddTiming(target, pair.Key, pair.Value);
+            }
+        }
+
+        private static void AddTiming(IDictionary<string, double> timings, string key, double value)
+        {
+            if (timings == null || string.IsNullOrWhiteSpace(key) || double.IsNaN(value) || double.IsInfinity(value) || value < 0)
+            {
+                return;
+            }
+
+            if (timings.TryGetValue(key, out var existing))
+            {
+                timings[key] = existing + value;
+                return;
+            }
+
+            timings[key] = value;
         }
         
         /// <summary>

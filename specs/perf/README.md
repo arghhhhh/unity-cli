@@ -1,6 +1,8 @@
 # LSP Performance History
 
 This directory stores historical LSP performance records.
+It is only for `scripts/lsp-perf-check.sh`.
+Runtime media/profiler benchmarking uses `scripts/perf-media-benchmark.sh` and writes artifacts under `.unity/perf-media/` instead.
 
 ## Files
 

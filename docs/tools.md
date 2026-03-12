@@ -207,7 +207,7 @@ Global options:
 
 | Tool | Description |
 | --- | --- |
-| `get_command_stats` | Get command statistics |
+| `get_command_stats` | Get bridge command statistics and, via the CLI, merged local transport timing stats |
 | `ping` | Check Unity Editor connectivity |
 | `list_packages` | List installed packages |
 

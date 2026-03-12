@@ -1,10 +1,13 @@
 using System;
 using System.IO;
+using System.Collections.Generic;
+using System.Diagnostics;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
 using UnityEditor.Recorder;
 using UnityEditor.Recorder.Input;
+using UnityCliBridge.Core;
 using UnityCliBridge.Logging;
 
 namespace UnityCliBridge.Handlers
@@ -38,6 +41,8 @@ namespace UnityCliBridge.Handlers
         {
             try
             {
+                var timings = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+                var setupStopwatch = Stopwatch.StartNew();
                 if (s_IsRecording)
                 {
                     return new { error = "A recording session is already running.", recordingId = s_RecordingId };
@@ -55,21 +60,17 @@ namespace UnityCliBridge.Handlers
                 s_IncludeUI = parameters["includeUI"]?.ToObject<bool>() ?? true;
                 s_MaxDurationSec = Math.Max(0, parameters["maxDurationSec"]?.ToObject<double>() ?? 0);
 
-                // 固定保存先: <workspace>/.unity/captures
+                // 固定保存先: <unityProjectRoot>/.unity/captures
                 string format = parameters["format"]?.ToString() ?? "mp4";
                 if (!IsValidFormat(format))
                 {
                     return new { error = "Invalid format. Use 'mp4', 'webm' or 'png_sequence'", code = "E_INVALID_FORMAT" };
                 }
-                // 生成ファイルパスを固定で作成 (<workspace>/.unity/captures)
+                // 生成ファイルパスを固定で作成 (<unityProjectRoot>/.unity/captures)
                 {
                     string timestamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
                     var projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
-                    var wsParam = parameters["workspaceRoot"]?.ToString();
-                    string workspaceRoot = (!string.IsNullOrEmpty(wsParam) && IsLocalPath(wsParam))
-                        ? wsParam
-                        : ResolveWorkspaceRoot(projectRoot);
-                    var captureDir = Path.Combine(workspaceRoot, ".unity", "captures");
+                    var captureDir = Path.Combine(projectRoot, ".unity", "captures");
                     if (!Directory.Exists(captureDir)) Directory.CreateDirectory(captureDir);
                     string ext = string.Equals(format, "webm", StringComparison.OrdinalIgnoreCase) ? ".webm" : ".mp4";
                     s_OutputPath = Path.Combine(captureDir, $"video_{s_CaptureMode}_{timestamp}{ext}");
@@ -83,7 +84,10 @@ namespace UnityCliBridge.Handlers
                 }
 
                 // 保存先ディレクトリを用意（Assets外も許可）
+                var ioStopwatch = Stopwatch.StartNew();
                 EnsureDirectory(s_OutputPath);
+                ioStopwatch.Stop();
+                timings["ioMs"] = ioStopwatch.Elapsed.TotalMilliseconds;
                 // 今回は GameView のみ対応（必須依存のRecorder使用）
                 if (!string.Equals(s_CaptureMode, "game", StringComparison.OrdinalIgnoreCase))
                 {
@@ -96,21 +100,21 @@ namespace UnityCliBridge.Handlers
                 s_MovieRecorderSettings = ScriptableObject.CreateInstance<MovieRecorderSettings>();
 
                 s_MovieRecorderSettings.Enabled = true;
-                // 出力先（ワークスペース直下 .unity/captures/<file>）に設定
+                // 出力先（プロジェクト直下 .unity/captures/<file>）に設定
                 var fileNoExt = Path.GetFileNameWithoutExtension(s_OutputPath);
                 s_MovieRecorderSettings.FileNameGenerator.Root = OutputPath.Root.Project;
                 {
                     string captureDir = Path.GetDirectoryName(s_OutputPath);
-                    string leaf = "../.unity/captures";
+                    string leaf = "/.unity/captures";
                     try
                     {
                         if (!string.IsNullOrEmpty(captureDir))
                         {
                             leaf = Path.GetRelativePath(Path.GetFullPath(Path.Combine(Application.dataPath, "..")), captureDir);
-                            if (Path.IsPathRooted(leaf)) leaf = "../.unity/captures";
+                            if (Path.IsPathRooted(leaf)) leaf = ".unity/captures";
                         }
                     }
-                    catch { leaf = "../.unity/captures"; }
+                    catch { leaf = ".unity/captures"; }
                     leaf = leaf.Replace('\\', '/');
                     if (!leaf.StartsWith("/")) leaf = "/" + leaf;
                     s_MovieRecorderSettings.FileNameGenerator.Leaf = leaf;
@@ -154,9 +158,11 @@ namespace UnityCliBridge.Handlers
                 s_StartedAt = DateTime.UtcNow;
                 s_Frames = 0;
                 s_IsRecording = true;
+                setupStopwatch.Stop();
+                timings["setupMs"] = setupStopwatch.Elapsed.TotalMilliseconds;
 
                 // Start session
-                return new
+                return AttachTimings(JObject.FromObject(new
                 {
                     recordingId = s_RecordingId,
                     outputPath = s_OutputPath,
@@ -167,7 +173,7 @@ namespace UnityCliBridge.Handlers
                     startedAt = s_StartedAt.ToString("o"),
                     note = "Recording started (Recorder mp4/webm).",
                     isRecording = s_RecorderController.IsRecording()
-                };
+                }), timings);
             }
             catch (Exception ex)
             {
@@ -180,6 +186,7 @@ namespace UnityCliBridge.Handlers
         {
             try
             {
+                var timings = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
                 if (!s_IsRecording)
                 {
                     return new { error = "No active recording session." };
@@ -199,13 +206,23 @@ namespace UnityCliBridge.Handlers
                 // stop recorder
                 if (s_RecorderController != null)
                 {
-                    try { s_RecorderController.StopRecording(); } catch (Exception e) { BridgeLogger.LogWarning("VideoCaptureHandler", $"Recorder stop warning: {e.Message}"); }
+                    try
+                    {
+                        var stopStopwatch = Stopwatch.StartNew();
+                        s_RecorderController.StopRecording();
+                        stopStopwatch.Stop();
+                        timings["stopRecorderMs"] = stopStopwatch.Elapsed.TotalMilliseconds;
+                    }
+                    catch (Exception e)
+                    {
+                        BridgeLogger.LogWarning("VideoCaptureHandler", $"Recorder stop warning: {e.Message}");
+                    }
                 }
                 s_AutoStopping = false;
 
                 double duration = (DateTime.UtcNow - started).TotalSeconds;
 
-                return new
+                return AttachTimings(JObject.FromObject(new
                 {
                     recordingId = id,
                     outputPath = path,
@@ -214,7 +231,7 @@ namespace UnityCliBridge.Handlers
                     frames = frames,
                     fps = fps,
                     note = "Recording stopped (Recorder)."
-                };
+                }), timings);
             }
             catch (Exception ex)
             {
@@ -227,13 +244,16 @@ namespace UnityCliBridge.Handlers
         {
             try
             {
+                var timings = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
                 if (!s_IsRecording)
                 {
-                    return new { isRecording = false };
+                    timings["queryMs"] = 0;
+                    return AttachTimings(JObject.FromObject(new { isRecording = false }), timings);
                 }
 
                 double elapsed = (DateTime.UtcNow - s_StartedAt).TotalSeconds;
-                return new
+                timings["queryMs"] = 0;
+                return AttachTimings(JObject.FromObject(new
                 {
                     isRecording = true,
                     recordingId = s_RecordingId,
@@ -242,51 +262,13 @@ namespace UnityCliBridge.Handlers
                     elapsedSec = Math.Max(0, elapsed),
                     frames = s_Frames,
                     fps = s_Fps
-                };
+                }), timings);
             }
             catch (Exception ex)
             {
                 BridgeLogger.LogError("VideoCaptureHandler", $"Status error: {ex.Message}");
                 return new { error = $"Failed to get recording status: {ex.Message}" };
             }
-        }
-
-        private static string ResolveWorkspaceRoot(string projectRoot)
-        {
-            try
-            {
-                string dir = projectRoot;
-                for (int i = 0; i < 10; i++)
-                {
-                    var unityDir = Path.Combine(dir, ".unity");
-                    if (Directory.Exists(unityDir)) return dir.Replace('\\', '/');
-                    var parent = Directory.GetParent(dir);
-                    if (parent == null) break;
-                    dir = parent.FullName;
-                }
-            }
-            catch { }
-            return projectRoot.Replace('\\', '/');
-        }
-
-
-        private static bool IsLocalPath(string path)
-        {
-            if (string.IsNullOrEmpty(path)) return false;
-            if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(
-                    System.Runtime.InteropServices.OSPlatform.Windows))
-            {
-                // Windows: "/foo" (UNC でない Unix 絶対パス) を拒否
-                if (path.StartsWith("/") && (path.Length < 2 || path[1] != '/'))
-                    return false;
-            }
-            else
-            {
-                // Unix: "C:\\..." や "D:/" などの Windows パスを拒否
-                if (path.Length >= 2 && char.IsLetter(path[0]) && path[1] == ':')
-                    return false;
-            }
-            return true;
         }
 
         private static bool IsValidCaptureMode(string mode)
@@ -308,7 +290,6 @@ namespace UnityCliBridge.Handlers
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
             {
                 Directory.CreateDirectory(dir);
-                UnityCliBridge.Helpers.DebouncedAssetRefresh.Request();
             }
         }
 
@@ -334,6 +315,42 @@ namespace UnityCliBridge.Handlers
                     };
                 }
             }
+        }
+
+        private static JObject AttachTimings(JObject payload, IDictionary<string, double> timings)
+        {
+            if (payload == null || timings == null || timings.Count == 0)
+            {
+                return payload;
+            }
+
+            foreach (var pair in timings)
+            {
+                if (string.IsNullOrWhiteSpace(pair.Key) || double.IsNaN(pair.Value) || double.IsInfinity(pair.Value) || pair.Value < 0)
+                {
+                    continue;
+                }
+
+                BridgeCommandStats.RecordStageDuration(ToStageKey(pair.Key), pair.Value);
+            }
+
+            return payload;
+        }
+
+        private static string ToStageKey(string key)
+        {
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                return key;
+            }
+
+            var trimmed = key.Trim();
+            if (trimmed.EndsWith("Ms", StringComparison.OrdinalIgnoreCase))
+            {
+                trimmed = trimmed.Substring(0, trimmed.Length - 2);
+            }
+
+            return trimmed.Replace(" ", "_").ToLowerInvariant() + "_ms";
         }
 
         // 反射ユーティリティは不要になったため削除

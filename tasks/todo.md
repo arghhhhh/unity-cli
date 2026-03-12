@@ -4,35 +4,38 @@
 
 ## Current Task
 
-- Title: Issue #107 C# 編集ワークフロー強化
-- Request Date: 2026-03-10
+- Title: 動画・静止画・Profiler 中心のパフォーマンス計測/改善基盤
+- Request Date: 2026-03-11
 - Owner: Codex
-- Scope: issue #107 の Spec/Plan/Tasks/TDD 更新、write 系の default LSP 化、共通レスポンス contract、`namePath` 整合、`write_csharp_file` / `create_csharp_file` / `apply_csharp_edits`、post-write pipeline、project/package setting API、関連テスト
-- Spec: GitHub Issue #107（`gwt-spec` ラベル、ローカル `specs/SPEC-*` は新規作成しない）
+- Scope: bridge の `get_command_stats` 拡張、capture/profiler の stage timing 計測、`.unity` 出力時の不要 refresh 削減、generated perf scene 生成、scenario 切替 controller、ローカル perf benchmark script、関連テスト/検証
+- Spec: ローカル計画ベース。GitHub Issue-first には未昇格
 
 ## Plan
 
-- [x] Step 1: issue #107 を `gwt-spec` 化し、Spec/Plan/Tasks/TDD と進捗コメントを更新
-- [x] Step 2: write 系の default LSP 化、共通レスポンス contract、`namePath` 正規化を実装
-- [x] Step 3: `write_csharp_file` / `create_csharp_file` / `apply_csharp_edits` と post-write pipeline を実装
-- [x] Step 4: `get_project_setting` / `set_project_setting` / `get_package_setting` / `set_package_setting` を実装
-- [x] Step 5: Rust / LSP / Unity bridge のテストを追加し、品質ゲートを実行
+- [x] Step 1: `get_command_stats` を per-command timing/stage breakdown 付きに拡張する
+- [x] Step 2: screenshot/video/profiler handlers に stage timing を追加し、`.unity` 出力時の不要 AssetRefresh を削減する
+- [x] Step 3: generated perf scene と runtime scenario controller を追加する
+- [x] Step 4: 動画・静止画・Profiler をまとめて回す perf benchmark script を追加する
+- [ ] Step 5: Rust / Unity / ローカル benchmark の検証を実行し、結果を記録する
 
 ## Verification
 
-- [x] `cargo fmt --all -- --check` 相当 (`cargo fmt --all` 実行後に差分なし)
+- [x] `cargo fmt --all -- --check`
 - [x] `cargo clippy --all-targets -- -D warnings`
-- [x] `cargo test --all-targets` — 202 tests pass
-- [x] `dotnet test lsp/Server.Tests.csproj` — 3 tests pass (`.cache/dotnet/sdk` のローカル SDK を使用)
-- [x] `dotnet build UnityCliBridge/UnityCliBridge.Editor.csproj` — success
-- [x] `dotnet build UnityCliBridge/UnityCliBridge.Tests.csproj` — success
-- [x] Unity batchmode EditMode tests — `BridgeBatchEditModeTestRunner` で `145 total / 139 passed / 0 failed / 6 skipped` を確認。skip はすべて batchmode で listener を立てない integration tests
+- [x] `cargo test --all-targets`
+- [x] `dotnet test lsp/Server.Tests.csproj`
+- [x] `bash -n scripts/perf-media-benchmark.sh`
+- [x] `cargo check -q`
+- [ ] `dotnet build UnityCliBridge/UnityCliBridge.Editor.csproj` — workspace 上に csproj が無く未実施
+- [ ] `dotnet build UnityCliBridge/UnityCliBridge.Tests.csproj` — workspace 上に csproj が無く未実施
+- [ ] Unity Editor 接続下で perf benchmark script を 1 回実行 — `system ping` / `get_command_stats` / `get_compilation_state` が response header timeout で未実施
+- [x] 暫定 runtime 計測 — 2026-03-12 に稼働中の別 Unity Editor project (`feature/input-system`, `127.0.0.1:6401`) で `SampleScene` を使い、`load_scene 785ms / play_game 787ms / profiler_start 722ms / capture_screenshot 724ms / capture_video_start 1014ms / capture_video_stop 701ms / profiler_stop 612ms / get_command_stats 672ms` を確認
 
 ## Review
 
-- Summary: issue #107 を `gwt-spec` 化した上で、C# write 系の default LSP 化、共通レスポンス contract、`namePath` 整合、validated file write/create/multi-file edit、post-write pipeline、singular settings API を追加。Rust 202 tests、LSP `dotnet test` 3 tests、Unity generated csproj build、Unity batch EditMode `145 total / 139 passed / 0 failed / 6 skipped` を確認。
-- Risks: `get_package_setting` / `set_package_setting` は repo に `SettingsManagement` 依存が無いため、project/user JSON ストアで機能を成立させている。Unity 公式 `-runTests -testResults ...` はこの project では依然として指定先 XML を吐かず、検証は `TestExecutionHandler` 経由の batch helper で補完した。
-- Follow-ups: Unity 公式 command-line test runner の `testResults` 出力不整合を別 issue で切り分ける。必要なら `manifest.json` の `testables` 運用と package test discovery フローを明文化する。
+- Summary: `get_command_stats` を `counts` / `recent` / `timings` 付きの bridge-side snapshot に拡張し、capture_screenshot / capture_video_* / profiler_* で stage timing を記録するようにした。合わせて Generated/E2E media perf scene、scenario controller、`.unity/perf-media/` 出力の benchmark script を追加した。
+- Risks: Unity Editor 側が現在 response header timeout で応答停止しており、perf benchmark 本体と Unity package compile の実機確認は未完了。`scripts/perf-media-benchmark.sh` は `summary.md` / `result.json` を出す実装だが、実行実績はまだ取れていない。
+- Follow-ups: current `feature/performance/UnityCliBridge` の Editor instance で bridge listener が起動しない原因を切り分ける。復帰後に 1. `get_compilation_state` 2. `get_command_stats` 3. `scripts/perf-media-benchmark.sh` を順に実行し、暫定値を current branch 上の artifact で置き換える。
 
 ## History
 
