@@ -477,7 +477,10 @@ fn replace_file_atomic(tmp: &Path, dest: &Path) -> Result<()> {
             let backup = dest.with_extension("previous");
             if backup.exists() {
                 fs::remove_file(&backup).with_context(|| {
-                    format!("Failed to clear backup file before replace: {}", backup.display())
+                    format!(
+                        "Failed to clear backup file before replace: {}",
+                        backup.display()
+                    )
                 })?;
             }
 
@@ -497,13 +500,17 @@ fn replace_file_atomic(tmp: &Path, dest: &Path) -> Result<()> {
             }
 
             fs::remove_file(&backup).with_context(|| {
-                format!("Failed to remove backup file after replace: {}", backup.display())
+                format!(
+                    "Failed to remove backup file after replace: {}",
+                    backup.display()
+                )
             })?;
             return Ok(());
         }
     }
 
-    fs::rename(tmp, dest).with_context(|| format!("Failed to move {} to {}", tmp.display(), dest.display()))
+    fs::rename(tmp, dest)
+        .with_context(|| format!("Failed to move {} to {}", tmp.display(), dest.display()))
 }
 
 fn http_client() -> Result<Agent> {

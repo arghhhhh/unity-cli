@@ -1343,7 +1343,10 @@ fn tool_params_schema(name: &str) -> Value {
             ),
             vec![
                 object_schema(
-                    &[("prefabPath", string_schema()), ("gameObjectPath", string_schema())],
+                    &[
+                        ("prefabPath", string_schema()),
+                        ("gameObjectPath", string_schema()),
+                    ],
                     &["prefabPath", "gameObjectPath"],
                     true,
                 ),
