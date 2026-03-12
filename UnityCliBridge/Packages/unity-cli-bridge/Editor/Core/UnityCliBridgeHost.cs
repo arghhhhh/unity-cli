@@ -5,6 +5,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Diagnostics;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -27,11 +28,9 @@ namespace UnityCliBridge.Core
     public static class UnityCliBridge
     {
         private static TcpListener tcpListener;
-        private static readonly Queue<(Command command, TcpClient client)> commandQueue = new Queue<(Command, TcpClient)>();
+        private static readonly Queue<(Command command, TcpClient client, DateTime enqueuedAtUtc)> commandQueue =
+            new Queue<(Command, TcpClient, DateTime)>();
         private static readonly object queueLock = new object();
-        private static readonly object statsLock = new object();
-        private static readonly Dictionary<string, int> commandCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        private static readonly Queue<(DateTime t, string type)> recentCommands = new Queue<(DateTime, string)>();
         private static CancellationTokenSource cancellationTokenSource;
         private static Task listenerTask;
         private static bool isProcessingCommand;
@@ -220,6 +219,7 @@ namespace UnityCliBridge.Core
                 {
                     commandQueue.Clear();
                 }
+                BridgeCommandStats.ResetForTesting();
                 
                 Status = BridgeStatus.Disconnected;
                 BridgeLogger.Log("TCP listener stopped");
@@ -354,7 +354,7 @@ namespace UnityCliBridge.Core
                                     // Queue command for processing on main thread
                                     lock (queueLock)
                                     {
-                                        commandQueue.Enqueue((command, client));
+                                        commandQueue.Enqueue((command, client, DateTime.UtcNow));
                                     }
                                 }
                                 else
@@ -456,13 +456,13 @@ namespace UnityCliBridge.Core
             {
                 while (true)
                 {
-                    (Command command, TcpClient client) item;
+                    (Command command, TcpClient client, DateTime enqueuedAtUtc) item;
                     lock (queueLock)
                     {
                         if (commandQueue.Count == 0) break;
                         item = commandQueue.Dequeue();
                     }
-                    await ProcessCommandInternal(item.command, item.client);
+                    await ProcessCommandInternal(item.command, item.client, item.enqueuedAtUtc);
                 }
             }
             finally
@@ -474,9 +474,11 @@ namespace UnityCliBridge.Core
         /// <summary>
         /// Processes a single command
         /// </summary>
-        private static async Task ProcessCommandInternal(Command command, TcpClient client)
+        private static async Task ProcessCommandInternal(Command command, TcpClient client, DateTime enqueuedAtUtc)
         {
             NetworkStream responseStream = null;
+            var commandType = command?.Type ?? "(null)";
+            using var statsScope = BridgeCommandStats.BeginCommand(commandType, enqueuedAtUtc);
             try
             {
                 if (!TryGetWritableStream(client, out responseStream))
@@ -488,20 +490,6 @@ namespace UnityCliBridge.Core
                 }
 
                 string response;
-
-                // Audit: カウントと最近のコマンドを記録（軽量・スレッドセーフ）
-                try
-                {
-                    var type = command.Type ?? "(null)";
-                    lock (statsLock)
-                    {
-                        if (!commandCounts.ContainsKey(type)) commandCounts[type] = 0;
-                        commandCounts[type]++;
-                        recentCommands.Enqueue((DateTime.UtcNow, type));
-                        while (recentCommands.Count > 50) recentCommands.Dequeue();
-                    }
-                }
-                catch { }
                 
                 // During Play Mode, restrict heavy commands per policy to keep the bridge responsive
                 if (Application.isPlaying && !PlayModeCommandPolicy.IsAllowed(command.Type))
@@ -512,11 +500,17 @@ namespace UnityCliBridge.Core
                         isUpdating = EditorApplication.isUpdating
                     };
                     response = Response.ErrorResult(command.Id, $"Command '{command.Type}' is blocked during Play Mode", "PLAY_MODE_BLOCKED", state);
+                    response = PrepareCommandResponseForStats(response, out _);
+                    var sendStopwatch = Stopwatch.StartNew();
                     await TrySendFramedMessage(responseStream, response, CancellationToken.None);
+                    sendStopwatch.Stop();
+                    BridgeCommandStats.RecordStageDuration("response_send_ms", sendStopwatch.Elapsed.TotalMilliseconds);
+                    statsScope.Complete(false, Encoding.UTF8.GetByteCount(response));
                     return;
                 }
 
                 var warnings = PlayModeChangeWarningHelper.GetWarnings(command.Type, command.Parameters);
+                var handlerStopwatch = Stopwatch.StartNew();
 
                 // Handle command based on type
                 switch (command.Type?.ToLower())
@@ -1003,18 +997,7 @@ namespace UnityCliBridge.Core
                         break;
                     case "get_command_stats":
                         {
-                            object stats;
-                            lock (statsLock)
-                            {
-                                stats = new
-                                {
-                                    counts = commandCounts.ToDictionary(kv => kv.Key, kv => kv.Value),
-                                    recent = recentCommands.ToArray()
-                                        .Select(x => new { timestamp = x.t.ToString("o"), type = x.type })
-                                        .ToArray()
-                                };
-                            }
-                            response = Response.SuccessResult(command.Id, stats);
+                            response = Response.SuccessResult(command.Id, BridgeCommandStats.CaptureSnapshot());
                             break;
                         }
                     default:
@@ -1032,9 +1015,16 @@ namespace UnityCliBridge.Core
                 {
                     response = Response.AppendWarnings(response, warnings);
                 }
+                handlerStopwatch.Stop();
+                BridgeCommandStats.RecordStageDuration("handler_ms", handlerStopwatch.Elapsed.TotalMilliseconds);
+                response = PrepareCommandResponseForStats(response, out var responseIsError);
 
                 // Send response
+                var responseWriteStopwatch = Stopwatch.StartNew();
                 await TrySendFramedMessage(responseStream, response, CancellationToken.None);
+                responseWriteStopwatch.Stop();
+                BridgeCommandStats.RecordStageDuration("response_send_ms", responseWriteStopwatch.Elapsed.TotalMilliseconds);
+                statsScope.Complete(!responseIsError, Encoding.UTF8.GetByteCount(response));
             }
             catch (Exception ex)
             {
@@ -1053,7 +1043,12 @@ namespace UnityCliBridge.Core
                                 stackTrace = ex.StackTrace
                             }
                         );
+                        errorResponse = PrepareCommandResponseForStats(errorResponse, out _);
+                        var responseWriteStopwatch = Stopwatch.StartNew();
                         await TrySendFramedMessage(responseStream, errorResponse, CancellationToken.None);
+                        responseWriteStopwatch.Stop();
+                        BridgeCommandStats.RecordStageDuration("response_send_ms", responseWriteStopwatch.Elapsed.TotalMilliseconds);
+                        statsScope.Complete(false, Encoding.UTF8.GetByteCount(errorResponse));
                     }
                 }
                 catch
@@ -1064,6 +1059,77 @@ namespace UnityCliBridge.Core
             finally
             {
             }
+        }
+
+        private static string PrepareCommandResponseForStats(string response, out bool isError)
+        {
+            var sanitized = response;
+            var timings = default(Dictionary<string, double>);
+            var extractedIsError = false;
+
+            if (!string.IsNullOrWhiteSpace(response))
+            {
+                try
+                {
+                    var root = JObject.Parse(response);
+                    extractedIsError =
+                        string.Equals(root["status"]?.ToString(), "error", StringComparison.OrdinalIgnoreCase) ||
+                        (root["success"]?.Type == JTokenType.Boolean && !(root["success"]?.Value<bool>() ?? true));
+
+                    var payload = root["result"] as JObject ?? root["data"] as JObject;
+                    if (payload?["_commandStats"] is JObject stats)
+                    {
+                        timings = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+                        foreach (var property in stats.Properties())
+                        {
+                            if (TryExtractTiming(property.Value, out var timing))
+                            {
+                                timings[property.Name] = timing;
+                            }
+                        }
+
+                        payload.Remove("_commandStats");
+                        sanitized = root.ToString(Formatting.None);
+                    }
+                }
+                catch
+                {
+                    // Ignore malformed responses and fall back to the original payload.
+                }
+            }
+
+            if (timings != null)
+            {
+                foreach (var timing in timings)
+                {
+                    BridgeCommandStats.RecordStageDuration(timing.Key, timing.Value);
+                }
+            }
+
+            isError = extractedIsError;
+            return sanitized;
+        }
+
+        private static bool TryExtractTiming(JToken token, out double value)
+        {
+            value = 0;
+            if (token == null)
+            {
+                return false;
+            }
+
+            if (token.Type == JTokenType.Integer || token.Type == JTokenType.Float)
+            {
+                value = token.Value<double>();
+                return true;
+            }
+
+            if (token.Type == JTokenType.String)
+            {
+                return double.TryParse(token.Value<string>(), out value);
+            }
+
+            return false;
         }
 
         internal static bool TryGetWritableStream(TcpClient client, out NetworkStream stream)
@@ -1153,7 +1219,7 @@ namespace UnityCliBridge.Core
                 }
 
                 var dropped = 0;
-                var retained = new Queue<(Command command, TcpClient client)>(commandQueue.Count);
+                var retained = new Queue<(Command command, TcpClient client, DateTime enqueuedAtUtc)>(commandQueue.Count);
 
                 while (commandQueue.Count > 0)
                 {
@@ -1185,7 +1251,7 @@ namespace UnityCliBridge.Core
 
             lock (queueLock)
             {
-                commandQueue.Enqueue((command, client));
+                commandQueue.Enqueue((command, client, DateTime.UtcNow));
             }
         }
 
@@ -1203,6 +1269,8 @@ namespace UnityCliBridge.Core
             {
                 commandQueue.Clear();
             }
+
+            BridgeCommandStats.ResetForTesting();
         }
 
         private static string DescribeClient(TcpClient client)

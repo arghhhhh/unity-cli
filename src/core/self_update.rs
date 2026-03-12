@@ -25,11 +25,9 @@ pub fn maybe_self_update() -> Option<JoinHandle<()>> {
         return None;
     }
 
-    Some(thread::spawn(move || {
-        match run_update(&marker) {
-            Ok(()) => tracing::debug!("self-update check completed"),
-            Err(e) => tracing::debug!("self-update failed: {e:#}"),
-        }
+    Some(thread::spawn(move || match run_update(&marker) {
+        Ok(()) => tracing::debug!("self-update check completed"),
+        Err(e) => tracing::debug!("self-update failed: {e:#}"),
     }))
 }
 
