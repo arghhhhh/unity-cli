@@ -10,6 +10,7 @@ use crate::cli::{
     SceneCommand, SystemCommand, ToolCommand, UnitydCommand,
 };
 use crate::config::RuntimeConfig;
+use crate::core::command_stats::{self, CliCommandTiming};
 use crate::core::contracts::BatchItem;
 use crate::instances::{list_instances, set_active_instance};
 use crate::tool_catalog::{get_tool_spec, is_known_tool, list_tool_specs, TOOL_NAMES};
@@ -246,25 +247,85 @@ async fn execute_tool(cli: &Cli, tool_name: &str, params: Value) -> Result<Value
     }
 
     let config = RuntimeConfig::from_cli(cli)?;
-    call_remote_tool(&config, tool_name, params).await
+    let (mut value, timing) = call_remote_tool_with_timing(&config, tool_name, params).await?;
+    if tool_name == "get_command_stats" {
+        augment_command_stats(&mut value);
+    }
+    if let Some(timing) = timing {
+        command_stats::record_cli_tool_call(tool_name, timing);
+    }
+    Ok(value)
 }
 
-async fn call_remote_tool(config: &RuntimeConfig, tool_name: &str, params: Value) -> Result<Value> {
+async fn call_remote_tool_with_timing(
+    config: &RuntimeConfig,
+    tool_name: &str,
+    params: Value,
+) -> Result<(Value, Option<CliCommandTiming>)> {
     // Try daemon first (fast path).
-    match unityd::try_call_tool(tool_name, &params, config).await {
-        Ok(value) => return Ok(value),
+    match unityd::try_call_tool_with_timing(tool_name, &params, config).await {
+        Ok(call) => {
+            let remote_timing = call.timing;
+            let connect_ms = remote_timing.as_ref().and_then(|timing| timing.connect_ms);
+            let unity_roundtrip_ms = remote_timing
+                .as_ref()
+                .map(|timing| timing.transport.total_ms);
+            let daemon_ipc_ms = Some(
+                (call.daemon_roundtrip_ms
+                    - connect_ms.unwrap_or_default()
+                    - unity_roundtrip_ms.unwrap_or_default())
+                .max(0.0),
+            );
+            return Ok((
+                call.value,
+                Some(CliCommandTiming {
+                    route: "daemon",
+                    success: true,
+                    total_ms: call.daemon_roundtrip_ms,
+                    daemon_ipc_ms,
+                    connect_ms,
+                    unity_roundtrip_ms,
+                    send_ms: remote_timing
+                        .as_ref()
+                        .map(|timing| timing.transport.send_ms),
+                    read_ms: remote_timing
+                        .as_ref()
+                        .map(|timing| timing.transport.read_ms),
+                    normalize_ms: remote_timing
+                        .as_ref()
+                        .map(|timing| timing.transport.normalize_ms),
+                }),
+            ));
+        }
         Err(error) if error.is_transport() => {}
         Err(error) => return Err(error.into()),
     }
 
     // Direct TCP fallback
+    let connect_started_at = std::time::Instant::now();
     let mut client = UnityClient::connect(config).await.with_context(|| {
         format!(
             "Failed to connect to Unity at {}:{}",
             config.host, config.port
         )
     })?;
-    client.call_tool(tool_name, params).await
+    let connect_ms = connect_started_at.elapsed().as_secs_f64() * 1000.0;
+    let outcome = client.call_tool_with_timing(tool_name, params).await?;
+    let unity_roundtrip_ms = outcome.timing.total_ms;
+    Ok((
+        outcome.value,
+        Some(CliCommandTiming {
+            route: "direct",
+            success: true,
+            total_ms: connect_ms + unity_roundtrip_ms,
+            daemon_ipc_ms: None,
+            connect_ms: Some(connect_ms),
+            unity_roundtrip_ms: Some(unity_roundtrip_ms),
+            send_ms: Some(outcome.timing.send_ms),
+            read_ms: Some(outcome.timing.read_ms),
+            normalize_ms: Some(outcome.timing.normalize_ms),
+        }),
+    ))
 }
 
 async fn execute_batch(cli: &Cli, json_str: Option<&str>, use_stdin: bool) -> Result<Value> {
@@ -356,6 +417,13 @@ fn should_skip_for_dry_run(cli: &Cli, tool_name: &str) -> bool {
     get_tool_spec(tool_name)
         .map(|spec| spec.mutating)
         .unwrap_or(false)
+}
+
+fn augment_command_stats(value: &mut Value) {
+    let cli_stats = command_stats::snapshot_value();
+    if let Some(object) = value.as_object_mut() {
+        object.insert("cli".to_string(), cli_stats);
+    }
 }
 
 fn validate_tool_params(tool_name: &str, params: &Value) -> Result<()> {
@@ -776,6 +844,31 @@ mod tests {
         let err = validate_tool_params("ping", &json!({ "unknown": true }))
             .expect_err("unknown key should fail for strict schema");
         assert!(format!("{err:#}").contains("$.unknown"));
+    }
+
+    #[test]
+    fn augment_command_stats_inserts_cli_snapshot() {
+        crate::core::command_stats::reset_for_tests();
+        crate::core::command_stats::record_cli_tool_call(
+            "ping",
+            crate::core::command_stats::CliCommandTiming {
+                route: "direct",
+                success: true,
+                total_ms: 5.0,
+                daemon_ipc_ms: None,
+                connect_ms: Some(1.0),
+                unity_roundtrip_ms: Some(4.0),
+                send_ms: Some(1.0),
+                read_ms: Some(2.0),
+                normalize_ms: Some(1.0),
+            },
+        );
+
+        let mut value = json!({ "counts": {} });
+        super::augment_command_stats(&mut value);
+
+        assert_eq!(value["cli"]["perTool"]["ping"]["count"], 1);
+        assert_eq!(value["cli"]["perTool"]["ping"]["routeCounts"]["direct"], 1);
     }
 
     #[test]

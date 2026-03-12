@@ -855,7 +855,6 @@ fn tool_params_schema(name: &str) -> Value {
                 ("includeUI", boolean_schema()),
                 ("windowName", string_schema()),
                 ("encodeAsBase64", boolean_schema()),
-                ("workspaceRoot", string_schema()),
                 ("explorerSettings", any_object_schema()),
             ],
             &[],
@@ -888,7 +887,6 @@ fn tool_params_schema(name: &str) -> Value {
                     "format",
                     enum_string_schema(&["mp4", "webm", "png_sequence"]),
                 ),
-                ("workspaceRoot", string_schema()),
             ],
             &[],
             false,
@@ -1332,15 +1330,35 @@ fn tool_params_schema(name: &str) -> Value {
             &["assetPath", "operation"],
             false,
         ),
-        "create_prefab" => object_schema(
-            &[
-                ("gameObjectPath", string_schema()),
-                ("prefabPath", string_schema()),
-                ("createFromTemplate", boolean_schema()),
-                ("overwrite", boolean_schema()),
+        "create_prefab" => with_any_of(
+            object_schema(
+                &[
+                    ("gameObjectPath", string_schema()),
+                    ("prefabPath", string_schema()),
+                    ("createFromTemplate", boolean_schema()),
+                    ("overwrite", boolean_schema()),
+                ],
+                &["prefabPath"],
+                false,
+            ),
+            vec![
+                object_schema(
+                    &[
+                        ("prefabPath", string_schema()),
+                        ("gameObjectPath", string_schema()),
+                    ],
+                    &["prefabPath", "gameObjectPath"],
+                    true,
+                ),
+                object_schema(
+                    &[
+                        ("prefabPath", string_schema()),
+                        ("createFromTemplate", boolean_schema()),
+                    ],
+                    &["prefabPath", "createFromTemplate"],
+                    true,
+                ),
             ],
-            &["gameObjectPath", "prefabPath"],
-            false,
         ),
         "modify_prefab" => object_schema(
             &[
@@ -2441,6 +2459,16 @@ mod tests {
     #[test]
     fn input_keyboard_schema_uses_any_of_for_action_or_actions() {
         let spec = get_tool_spec("input_keyboard").expect("input_keyboard must exist");
+        assert_eq!(
+            spec.params_schema["anyOf"].as_array().map(|v| v.len()),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn create_prefab_schema_allows_template_mode_without_source_object() {
+        let spec = get_tool_spec("create_prefab").expect("create_prefab must exist");
+        assert_eq!(spec.params_schema["required"], json!(["prefabPath"]));
         assert_eq!(
             spec.params_schema["anyOf"].as_array().map(|v| v.len()),
             Some(2)

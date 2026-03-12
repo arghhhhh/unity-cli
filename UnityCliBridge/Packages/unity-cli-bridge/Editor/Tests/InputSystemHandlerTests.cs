@@ -565,6 +565,51 @@ namespace UnityCliBridge.Tests
             Assert.AreEqual(2, resultJson["totalSteps"].ToObject<int>());
         }
 
+        [UnityTest]
+        public IEnumerator CreateInputSequence_AppliesDelayAndProcessesScheduledRelease()
+        {
+            var parameters = new JObject
+            {
+                ["sequence"] = new JArray
+                {
+                    new JObject
+                    {
+                        ["type"] = "keyboard",
+                        ["params"] = new JObject
+                        {
+                            ["action"] = "press",
+                            ["key"] = "A",
+                            ["holdSeconds"] = 0.05
+                        }
+                    },
+                    new JObject
+                    {
+                        ["type"] = "mouse",
+                        ["params"] = new JObject
+                        {
+                            ["action"] = "move",
+                            ["x"] = 100,
+                            ["y"] = 120,
+                            ["absolute"] = true
+                        }
+                    }
+                },
+                ["delayBetween"] = 80
+            };
+
+            var result = InputSystemHandler.CreateInputSequence(parameters);
+            InputSystem.Update();
+
+            var resultJson = JObject.FromObject(result);
+            Assert.IsTrue(resultJson["success"].ToObject<bool>());
+            Assert.GreaterOrEqual(resultJson["totalDurationMs"].ToObject<int>(), 70);
+            Assert.IsFalse(keyboard.aKey.isPressed);
+            Assert.AreEqual(100f, mouse.position.x.ReadValue(), 0.01f);
+            Assert.AreEqual(120f, mouse.position.y.ReadValue(), 0.01f);
+
+            yield return null;
+        }
+
         [Test]
         public void GetCurrentInputState_Success()
         {
@@ -582,6 +627,129 @@ namespace UnityCliBridge.Tests
             Assert.NotNull(resultJson["mouse"]);
             Assert.NotNull(resultJson["gamepad"]);
             Assert.NotNull(resultJson["touchscreen"]);
+        }
+
+        [Test]
+        public void GetCurrentInputState_ReflectsMouseSimulation()
+        {
+            InputSystemHandler.SimulateMouseInput(new JObject
+            {
+                ["action"] = "move",
+                ["x"] = 42,
+                ["y"] = 84,
+                ["absolute"] = true
+            });
+            InputSystemHandler.SimulateMouseInput(new JObject
+            {
+                ["action"] = "scroll",
+                ["deltaX"] = 1,
+                ["deltaY"] = 9
+            });
+
+            var result = JObject.FromObject(InputSystemHandler.GetCurrentInputState(new JObject()));
+            Assert.AreEqual(42f, result["mouse"]?["position"]?["x"]?.ToObject<float>() ?? -1f, 0.01f);
+            Assert.AreEqual(84f, result["mouse"]?["position"]?["y"]?.ToObject<float>() ?? -1f, 0.01f);
+            Assert.AreEqual(1f, result["mouse"]?["scroll"]?["x"]?.ToObject<float>() ?? -1f, 0.01f);
+            Assert.AreEqual(9f, result["mouse"]?["scroll"]?["y"]?.ToObject<float>() ?? -1f, 0.01f);
+        }
+
+        [Test]
+        public void GetCurrentInputState_ReflectsGamepadSimulation()
+        {
+            InputSystemHandler.SimulateGamepadInput(new JObject
+            {
+                ["action"] = "stick",
+                ["stick"] = "left",
+                ["x"] = 0.5f,
+                ["y"] = 0.75f
+            });
+            InputSystemHandler.SimulateGamepadInput(new JObject
+            {
+                ["action"] = "trigger",
+                ["trigger"] = "left",
+                ["value"] = 0.8f
+            });
+            InputSystemHandler.SimulateGamepadInput(new JObject
+            {
+                ["action"] = "dpad",
+                ["direction"] = "up"
+            });
+
+            var result = JObject.FromObject(InputSystemHandler.GetCurrentInputState(new JObject()));
+            Assert.AreEqual(0.5f, result["gamepad"]?["sticks"]?["left"]?["x"]?.ToObject<float>() ?? -1f, 0.05f);
+            Assert.AreEqual(0.75f, result["gamepad"]?["sticks"]?["left"]?["y"]?.ToObject<float>() ?? -1f, 0.05f);
+            Assert.AreEqual(0.8f, result["gamepad"]?["triggers"]?["left"]?.ToObject<float>() ?? -1f, 0.05f);
+            Assert.AreEqual(0f, result["gamepad"]?["dpad"]?["x"]?.ToObject<float>() ?? -1f, 0.01f);
+            Assert.AreEqual(1f, result["gamepad"]?["dpad"]?["y"]?.ToObject<float>() ?? -1f, 0.01f);
+        }
+
+        [Test]
+        public void GetCurrentInputState_ReflectsTouchSimulation()
+        {
+            InputSystemHandler.SimulateTouchInput(new JObject
+            {
+                ["action"] = "multi",
+                ["touches"] = new JArray
+                {
+                    new JObject
+                    {
+                        ["x"] = 150,
+                        ["y"] = 180,
+                        ["phase"] = "began"
+                    },
+                    new JObject
+                    {
+                        ["x"] = 210,
+                        ["y"] = 180,
+                        ["phase"] = "moved"
+                    }
+                }
+            });
+
+            var result = JObject.FromObject(InputSystemHandler.GetCurrentInputState(new JObject()));
+            var touches = result["touchscreen"]?["activeTouches"] as JArray;
+            Assert.NotNull(touches);
+            Assert.GreaterOrEqual(touches.Count, 2);
+        }
+
+        [Test]
+        public void GetCurrentInputState_ReflectsTypedKeyboardText()
+        {
+            InputSystemHandler.SimulateKeyboardInput(new JObject
+            {
+                ["action"] = "type",
+                ["text"] = "Hi"
+            });
+
+            var result = JObject.FromObject(InputSystemHandler.GetCurrentInputState(new JObject()));
+            Assert.AreEqual("Hi", result["keyboard"]?["lastTypedText"]?.ToObject<string>());
+        }
+
+        [UnityTest]
+        public IEnumerator GetCurrentInputState_FlushesScheduledReleases()
+        {
+            var pressParams = new JObject
+            {
+                ["action"] = "button",
+                ["button"] = "left",
+                ["buttonAction"] = "press",
+                ["holdSeconds"] = 0.05
+            };
+
+            InputSystemHandler.SimulateMouseInput(pressParams);
+            InputSystem.Update();
+
+            var pressedState = JObject.FromObject(InputSystemHandler.GetCurrentInputState(new JObject()));
+            Assert.IsTrue(pressedState["mouse"]?["leftButton"]?.ToObject<bool>() ?? false);
+
+            double start = EditorApplication.timeSinceStartup;
+            while (EditorApplication.timeSinceStartup - start < 0.1f)
+            {
+                yield return null;
+            }
+
+            var releasedState = JObject.FromObject(InputSystemHandler.GetCurrentInputState(new JObject()));
+            Assert.IsFalse(releasedState["mouse"]?["leftButton"]?.ToObject<bool>() ?? true);
         }
 
         #endregion

@@ -1,10 +1,12 @@
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Value};
+use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 use crate::config::RuntimeConfig;
+use crate::core::command_stats::TransportTiming;
 
 const MAX_FRAME_BYTES: i32 = 10 * 1024 * 1024;
 
@@ -12,6 +14,11 @@ pub struct UnityClient {
     stream: TcpStream,
     timeout: std::time::Duration,
     next_id: u64,
+}
+
+pub struct ToolCallResult {
+    pub value: Value,
+    pub timing: TransportTiming,
 }
 
 impl UnityClient {
@@ -36,10 +43,19 @@ impl UnityClient {
     }
 
     pub async fn call_tool(&mut self, tool_name: &str, params: Value) -> Result<Value> {
+        Ok(self.call_tool_with_timing(tool_name, params).await?.value)
+    }
+
+    pub async fn call_tool_with_timing(
+        &mut self,
+        tool_name: &str,
+        params: Value,
+    ) -> Result<ToolCallResult> {
         if !params.is_object() {
             bail!("Tool parameters must be a JSON object");
         }
 
+        let total_started_at = Instant::now();
         let request = json!({
           "id": self.next_id.to_string(),
           "type": tool_name,
@@ -47,9 +63,27 @@ impl UnityClient {
         });
         self.next_id += 1;
 
+        let send_started_at = Instant::now();
         self.send_framed(&request).await?;
+        let send_ms = send_started_at.elapsed().as_secs_f64() * 1000.0;
+
+        let read_started_at = Instant::now();
         let response = self.read_response().await?;
-        normalize_response(response)
+        let read_ms = read_started_at.elapsed().as_secs_f64() * 1000.0;
+
+        let normalize_started_at = Instant::now();
+        let value = normalize_response(response)?;
+        let normalize_ms = normalize_started_at.elapsed().as_secs_f64() * 1000.0;
+
+        Ok(ToolCallResult {
+            value,
+            timing: TransportTiming {
+                send_ms,
+                read_ms,
+                normalize_ms,
+                total_ms: total_started_at.elapsed().as_secs_f64() * 1000.0,
+            },
+        })
     }
 
     async fn send_framed(&mut self, request: &Value) -> Result<()> {
@@ -261,6 +295,38 @@ mod tests {
 
         assert_eq!(result["ok"], true);
         assert_eq!(result["echo"], "hello");
+        server.await.expect("server task should complete");
+    }
+
+    #[tokio::test]
+    async fn call_tool_with_timing_reports_non_negative_durations() {
+        let (port, server) = spawn_mock_server(|request| {
+            json!({
+                "id": request["id"],
+                "status": "success",
+                "result": { "ok": true }
+            })
+        })
+        .await;
+
+        let config = RuntimeConfig {
+            host: "127.0.0.1".to_string(),
+            port,
+            timeout: Duration::from_millis(500),
+        };
+        let mut client = UnityClient::connect(&config)
+            .await
+            .expect("client should connect");
+        let result = client
+            .call_tool_with_timing("ping", json!({}))
+            .await
+            .expect("tool call should succeed");
+
+        assert_eq!(result.value["ok"], true);
+        assert!(result.timing.total_ms >= 0.0);
+        assert!(result.timing.send_ms >= 0.0);
+        assert!(result.timing.read_ms >= 0.0);
+        assert!(result.timing.normalize_ms >= 0.0);
         server.await.expect("server task should complete");
     }
 
