@@ -321,6 +321,7 @@ namespace UnityCliBridge.Handlers
                 }
 
                 Material material = null;
+                Material existingMaterial = AssetDatabase.LoadAssetAtPath<Material>(materialPath);
                 List<string> propertiesSet = new List<string>();
 
                 if (!string.IsNullOrEmpty(copyFrom))
@@ -359,7 +360,18 @@ namespace UnityCliBridge.Handlers
                 }
 
                 // Save the material
-                AssetDatabase.CreateAsset(material, materialPath);
+                if (existingMaterial != null && overwrite)
+                {
+                    EditorUtility.CopySerialized(material, existingMaterial);
+                    UnityEngine.Object.DestroyImmediate(material);
+                    material = existingMaterial;
+                    EditorUtility.SetDirty(material);
+                }
+                else
+                {
+                    AssetDatabase.CreateAsset(material, materialPath);
+                }
+
                 AssetDatabase.SaveAssets();
 
                 // Get asset GUID
@@ -408,10 +420,12 @@ namespace UnityCliBridge.Handlers
                     return new { error = "materialPath must start with Assets/ and end with .mat" };
                 }
 
-                // Validate properties
-                if (properties == null || !properties.HasValues)
+                // Validate requested changes
+                bool hasPropertyChanges = properties != null && properties.HasValues;
+                bool hasShaderChange = !string.IsNullOrEmpty(shader);
+                if (!hasPropertyChanges && !hasShaderChange)
                 {
-                    return new { error = "properties object is required and cannot be empty" };
+                    return new { error = "Either shader or a non-empty properties object is required" };
                 }
 
                 // Load the material
@@ -442,11 +456,14 @@ namespace UnityCliBridge.Handlers
                 }
 
                 // Apply property modifications
-                foreach (var prop in properties.Properties())
+                if (properties != null)
                 {
-                    if (ApplyMaterialProperty(material, prop.Name, prop.Value))
+                    foreach (var prop in properties.Properties())
                     {
-                        propertiesModified.Add(prop.Name);
+                        if (ApplyMaterialProperty(material, prop.Name, prop.Value))
+                        {
+                            propertiesModified.Add(prop.Name);
+                        }
                     }
                 }
 

@@ -471,8 +471,39 @@ fn replace_file_atomic(tmp: &Path, dest: &Path) -> Result<()> {
     // same-filesystem operation that overwrites dest in place.
     // Never delete dest before rename — that risks leaving no binary at all
     // if the process is interrupted.
-    fs::rename(tmp, dest)
-        .with_context(|| format!("Failed to move {} to {}", tmp.display(), dest.display()))
+    #[cfg(windows)]
+    {
+        if dest.exists() {
+            let backup = dest.with_extension("previous");
+            if backup.exists() {
+                fs::remove_file(&backup).with_context(|| {
+                    format!("Failed to clear backup file before replace: {}", backup.display())
+                })?;
+            }
+
+            fs::rename(dest, &backup).with_context(|| {
+                format!(
+                    "Failed to move existing destination {} to {}",
+                    dest.display(),
+                    backup.display()
+                )
+            })?;
+
+            if let Err(error) = fs::rename(tmp, dest) {
+                let _ = fs::rename(&backup, dest);
+                return Err(error).with_context(|| {
+                    format!("Failed to move {} to {}", tmp.display(), dest.display())
+                });
+            }
+
+            fs::remove_file(&backup).with_context(|| {
+                format!("Failed to remove backup file after replace: {}", backup.display())
+            })?;
+            return Ok(());
+        }
+    }
+
+    fs::rename(tmp, dest).with_context(|| format!("Failed to move {} to {}", tmp.display(), dest.display()))
 }
 
 fn http_client() -> Result<Agent> {
