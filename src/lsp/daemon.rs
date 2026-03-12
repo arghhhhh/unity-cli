@@ -952,24 +952,39 @@ mod tests {
         }
         assert!(ready, "daemon did not become ready");
 
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        let mut client = std::os::unix::net::UnixStream::connect(&socket)
+            .expect("client should connect to daemon socket");
+        client
+            .set_read_timeout(Some(std::time::Duration::from_secs(30)))
+            .expect("client read timeout should be set");
+        client
+            .set_write_timeout(Some(std::time::Duration::from_secs(30)))
+            .expect("client write timeout should be set");
+        let payload =
+            serde_json::to_string(&DaemonRequest::Stop).expect("stop request should serialize");
+        client
+            .write_all(payload.as_bytes())
+            .expect("stop request write should succeed");
+        client
+            .write_all(b"\n")
+            .expect("stop request newline write should succeed");
+        client.flush().expect("stop request flush should succeed");
 
-        let mut stopped = false;
-        let status_deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-        while std::time::Instant::now() < status_deadline {
-            if let Ok(value) = stop() {
-                if value
-                    .get("stopped")
-                    .and_then(serde_json::Value::as_bool)
-                    .unwrap_or(false)
-                {
-                    stopped = true;
-                    break;
-                }
-            }
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-        assert!(stopped, "daemon did not respond to stop");
+        let mut response_line = String::new();
+        BufReader::new(client)
+            .read_line(&mut response_line)
+            .expect("stop response should be readable");
+        let response: DaemonResponse =
+            serde_json::from_str(response_line.trim()).expect("stop response should parse");
+        assert!(response.ok, "daemon stop response should be ok");
+        assert_eq!(
+            response
+                .result
+                .as_ref()
+                .and_then(|value| value.get("stopping"))
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
 
         thread.join().expect("daemon thread should join");
         cleanup_stale_files();
