@@ -759,12 +759,17 @@ mod tests {
 
     #[test]
     fn write_pid_file_and_cleanup_manage_files_under_tools_root() {
+        let _guard = env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let (_tools_root, _env) = prepare_tools_root();
         cleanup_stale_files();
         let pid_path = pid_file_path().expect("pid file path should resolve");
         write_pid_file().expect("pid file write should succeed");
         assert!(pid_path.exists());
 
         cleanup_stale_files();
+        assert!(!pid_path.exists());
     }
 
     #[cfg(unix)]
