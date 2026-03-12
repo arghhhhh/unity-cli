@@ -943,9 +943,20 @@ mod tests {
         assert!(socket.exists(), "socket file should exist before stop");
 
         let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener
-                .accept()
-                .expect("listener should accept stop client");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let (mut stream, _) = loop {
+                match listener.accept() {
+                    Ok(pair) => break pair,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(
+                            std::time::Instant::now() < deadline,
+                            "listener did not accept stop client before timeout"
+                        );
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("listener should accept stop client: {error}"),
+                }
+            };
             stream
                 .set_nonblocking(false)
                 .expect("accepted stream should become blocking");
