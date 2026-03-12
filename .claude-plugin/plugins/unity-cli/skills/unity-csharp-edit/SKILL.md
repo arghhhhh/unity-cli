@@ -42,7 +42,7 @@ unity-cli raw find_symbol --json '{"name":"Player","kind":"class","scope":"asset
 unity-cli raw find_refs --json '{"name":"Player","kind":"class","scope":"assets"}'
 
 unity-cli raw rename_symbol --json '{"relative":"Assets/Scripts/Player.cs","namePath":"Player/Jump","newName":"Leap","apply":false}'
-unity-cli raw replace_symbol_body --json '{"relative":"Assets/Scripts/Player.cs","namePath":"Player/Jump","body":"{ velocity.y = jumpSpeed; }","apply":true,"waitForCompile":true,"updateIndex":true}'
+unity-cli raw replace_symbol_body --json '{"relative":"Assets/Scripts/Player.cs","namePath":"Player/Jump","body":"{ velocity.y = jumpSpeed; }","apply":true}'
 unity-cli raw insert_before_symbol --json '{"relative":"Assets/Scripts/Player.cs","namePath":"Player/Jump","text":"[SerializeField] private float dashCooldown = 0.25f;","apply":true}'
 unity-cli raw insert_after_symbol --json '{"relative":"Assets/Scripts/Player.cs","namePath":"Player/Jump","text":"private bool CanDash() { return dashCooldown > 0f; }","apply":true}'
 unity-cli raw remove_symbol --json '{"relative":"Assets/Scripts/Player.cs","namePath":"Player/LegacyJump","apply":true,"failOnReferences":true}'
