@@ -49,7 +49,7 @@ namespace UnityCliBridge.Core
                 new Dictionary<string, MetricAggregate>(StringComparer.OrdinalIgnoreCase);
         }
 
-        private sealed class CommandContext
+        internal sealed class CommandContext
         {
             public CommandContext(string commandType, DateTime startedAtUtc)
             {
