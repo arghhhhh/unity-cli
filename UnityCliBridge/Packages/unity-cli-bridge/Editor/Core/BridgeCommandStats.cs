@@ -11,7 +11,7 @@ namespace UnityCliBridge.Core
     /// </summary>
     public static class BridgeCommandStats
     {
-        private sealed class MetricAggregate
+        internal sealed class MetricAggregate
         {
             public int Count;
             public double TotalMs;
