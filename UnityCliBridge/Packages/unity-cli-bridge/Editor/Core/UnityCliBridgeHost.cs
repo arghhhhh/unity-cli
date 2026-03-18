@@ -537,9 +537,9 @@ namespace UnityCliBridge.Core
             {
                 if (!TryGetWritableStream(client, out responseStream))
                 {
-                    var commandId = command?.Id ?? "(unknown)";
-                    var commandType = command?.Type ?? "(unknown)";
-                    BridgeLogger.LogWarning($"Skipping command {commandId}:{commandType} because client stream is not writable");
+                    var skippedId = command?.Id ?? "(unknown)";
+                    var skippedType = command?.Type ?? "(unknown)";
+                    BridgeLogger.LogWarning($"Skipping command {skippedId}:{skippedType} because client stream is not writable");
                     return;
                 }
 
