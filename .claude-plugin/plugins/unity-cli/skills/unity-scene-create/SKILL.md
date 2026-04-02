@@ -44,7 +44,7 @@ unity-cli raw save_scene --json '{"scenePath":"Assets/Scenes/MyScene.unity"}'
 unity-cli raw create_gameobject --json '{"name":"Player","primitiveType":"Cube"}'
 unity-cli raw create_gameobject --json '{"name":"Empty","parentPath":"/Canvas"}'
 
-# Add components
+# Add components (uses "gameObjectPath" with leading slash, NOT "gameObjectName")
 unity-cli raw add_component --json '{"gameObjectPath":"/Player","componentType":"Rigidbody"}'
 unity-cli raw add_component --json '{"gameObjectPath":"/Player","componentType":"BoxCollider"}'
 ```

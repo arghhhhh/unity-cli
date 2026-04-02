@@ -31,14 +31,23 @@ Read `references/component-edit-safety.md` when the task involves destructive ed
 3. Use destructive commands like `delete_gameobject` or `remove_component` only after confirming scope.
 4. Save the scene after destructive or bulk updates.
 
+## Critical: Parameter Name Reference
+
+Different tools use different parameter names. Using the wrong one causes errors:
+- **Read-only** (`get_gameobject_details`, `get_component_values`): use `gameObjectName`
+- **Mutations** (`add_component`, `modify_component`, `set_component_field`, `remove_component`, `list_components`): use `gameObjectPath`
+- **GameObject mutations** (`modify_gameobject`, `delete_gameobject`): use `path`
+
+When unsure: `unity-cli tool schema <tool_name> --output json`
+
 ## Commands
 
 ```bash
-# Modify GameObject properties
+# Modify GameObject properties (uses "path", NOT "gameObjectName" or "gameObjectPath")
 unity-cli raw modify_gameobject --json '{"path":"/Player","name":"Hero","active":true}'
 unity-cli raw delete_gameobject --json '{"path":"/OldObject"}'
 
-# Component operations
+# Component operations (uses "gameObjectPath", NOT "gameObjectName")
 unity-cli raw modify_component --json '{"gameObjectPath":"/Player","componentType":"Rigidbody","properties":{"mass":2.0}}'
 unity-cli raw set_component_field --json '{"gameObjectPath":"/Player","componentType":"Transform","fieldPath":"position","value":{"x":0,"y":1,"z":0}}'
 unity-cli raw remove_component --json '{"gameObjectPath":"/Player","componentType":"BoxCollider"}'

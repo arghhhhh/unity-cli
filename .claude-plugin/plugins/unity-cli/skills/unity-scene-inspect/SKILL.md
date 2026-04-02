@@ -31,6 +31,19 @@ Read `references/scene-inspection-playbook.md` when the scene is large, object n
 3. Inspect the chosen target with `get_gameobject_details`, `get_component_values`, or animator queries.
 4. Use `analyze_scene_contents` for broad audits or when inactive objects matter.
 
+## Critical: Parameter Names
+
+Read-only inspection tools use `gameObjectName` (no leading slash), NOT `gameObjectPath`:
+- `get_gameobject_details` — `gameObjectName` or `path`
+- `get_component_values` — `gameObjectName`
+- `get_object_references` — `gameObjectName`
+- `get_animator_state` — `gameObjectName`
+
+Search tools use `name` (not `gameObjectName`):
+- `find_gameobject` — `name`
+
+When unsure: `unity-cli tool schema <tool_name> --output json`
+
 ## Commands
 
 ```bash
@@ -39,11 +52,11 @@ unity-cli raw get_hierarchy --json '{"nameOnly":true}'
 unity-cli raw get_scene_info --json '{}'
 unity-cli raw list_scenes --json '{}'
 
-# Find objects
+# Find objects (uses "name", NOT "gameObjectName")
 unity-cli raw find_gameobject --json '{"name":"Player"}'
 unity-cli raw find_by_component --json '{"componentType":"Camera"}'
 
-# Inspect details
+# Inspect details (uses "gameObjectName", NOT "gameObjectPath")
 unity-cli raw get_gameobject_details --json '{"gameObjectName":"Player"}'
 unity-cli raw get_component_values --json '{"gameObjectName":"Player","componentType":"Transform"}'
 unity-cli raw get_object_references --json '{"gameObjectName":"Player"}'
@@ -51,7 +64,7 @@ unity-cli raw get_object_references --json '{"gameObjectName":"Player"}'
 # Scene analysis
 unity-cli raw analyze_scene_contents --json '{"includeInactive":true}'
 
-# Animator
+# Animator (uses "gameObjectName")
 unity-cli raw get_animator_state --json '{"gameObjectName":"Player"}'
 unity-cli raw get_animator_runtime_info --json '{"gameObjectName":"Player"}'
 ```
