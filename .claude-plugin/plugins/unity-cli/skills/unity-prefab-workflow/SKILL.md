@@ -1,4 +1,5 @@
 ---
+version: 1.0.0
 name: unity-prefab-workflow
 description: Manage Unity prefab assets with unity-cli. Use when the user asks to create a prefab from a scene object, open a prefab in edit mode, save prefab changes, instantiate a prefab into a scene, or update prefab asset properties. Do not use for general scene object editing outside prefab workflows.
 allowed-tools: Bash, Read, Grep, Glob

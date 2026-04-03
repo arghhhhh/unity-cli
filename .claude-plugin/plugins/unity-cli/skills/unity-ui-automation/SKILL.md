@@ -1,4 +1,5 @@
 ---
+version: 1.0.0
 name: unity-ui-automation
 description: Automate Unity UI inspection and interaction with unity-cli. Use when the user asks to find UI elements by name or type, inspect button or input state, click UI elements, set UI values, or run short UI interaction sequences during testing. Do not use for scene creation or general PlayMode control when UI-specific targeting is not needed.
 allowed-tools: Bash, Read, Grep, Glob

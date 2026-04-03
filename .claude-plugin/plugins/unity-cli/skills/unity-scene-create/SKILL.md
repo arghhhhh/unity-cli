@@ -1,4 +1,5 @@
 ---
+version: 1.0.0
 name: unity-scene-create
 description: Create and bootstrap Unity scenes with unity-cli. Use when the user asks to create a new scene, load or save a scene, add starter GameObjects, or attach components while setting up a level or test scene. Do not use for editing existing objects in place or working inside prefab edit mode; use the dedicated editing or prefab skills for those cases.
 allowed-tools: Bash, Read, Grep, Glob

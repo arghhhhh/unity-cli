@@ -1,4 +1,5 @@
 ---
+version: 1.0.0
 name: unity-input-system
 description: Configure Unity Input System assets with unity-cli. Use when the user asks to create or remove action maps, add or remove actions and bindings, set up composite bindings, inspect input action assets, or manage control schemes. Do not use for runtime input simulation during tests; use the PlayMode testing skill for that workflow.
 allowed-tools: Bash, Read, Grep, Glob

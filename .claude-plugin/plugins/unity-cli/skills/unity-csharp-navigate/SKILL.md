@@ -1,4 +1,5 @@
 ---
+version: 1.0.0
 name: unity-csharp-navigate
 description: Explore Unity C# code without modifying files. Use when the user asks to read scripts, search text, find symbols, trace references, inspect namespaces or packages, or understand where a class, method, or field is used. Do not use for code edits, renames, or refactors; use the editing skill for those.
 allowed-tools: Bash, Read, Grep, Glob

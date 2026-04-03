@@ -1,4 +1,5 @@
 ---
+version: 1.0.0
 name: unity-asset-management
 description: Manage Unity assets and import metadata with unity-cli. Use when the user asks to refresh the Asset Database, inspect asset info, create or modify materials, create animation clips or sprite atlases, update import settings, or analyze asset dependencies before moving or deleting files. Do not use for Addressables-specific workflows or scene object edits.
 allowed-tools: Bash, Read, Grep, Glob

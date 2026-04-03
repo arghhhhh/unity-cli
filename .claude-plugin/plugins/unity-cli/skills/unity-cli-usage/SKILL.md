@@ -1,4 +1,5 @@
 ---
+version: 1.0.0
 name: unity-cli-usage
 description: Use unity-cli as the default interface for Unity Editor automation and local code tools. Use when the user asks how to verify the CLI, connect to Unity, switch active instances, choose between typed commands and raw tools, or troubleshoot unity-cli setup. Do not use once a more specific scene, asset, code, or testing skill clearly matches the task.
 allowed-tools: Bash, Read, Grep, Glob

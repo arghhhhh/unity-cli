@@ -1,4 +1,5 @@
 ---
+version: 1.0.0
 name: unity-csharp-edit
 description: Implement, fix, and refactor Unity C# code with unity-cli write tools. Use when the user wants to change behavior in .cs files, create or rewrite scripts, update multiple C# files together, rename symbols, add or remove members, or change project or package settings as part of a code change. Prefer this skill whenever the request implies writing Unity C# code; do not use it for read-only inspection with no planned edit.
 allowed-tools: Bash, Read, Grep, Glob

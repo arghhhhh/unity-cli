@@ -1,4 +1,5 @@
 ---
+version: 1.0.0
 name: unity-gameobject-edit
 description: Edit existing GameObjects and components in Unity with unity-cli. Use when the user asks to rename objects, move or deactivate them, change component fields, add or remove tags and layers, or delete objects or components in an existing scene. Do not use for new scene bootstrapping or prefab edit mode; those have dedicated skills.
 allowed-tools: Bash, Read, Grep, Glob

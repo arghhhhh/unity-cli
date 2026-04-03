@@ -1,4 +1,5 @@
 ---
+version: 1.0.0
 name: unity-playmode-testing
 description: Drive Unity runtime verification with unity-cli. Use when the user asks to enter or exit Play Mode, run EditMode or PlayMode tests, simulate keyboard, mouse, gamepad, or touch input, capture screenshots or video, or inspect current test status. Do not use for authoring input action assets; use the Input System skill for that.
 allowed-tools: Bash, Read, Grep, Glob

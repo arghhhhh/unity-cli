@@ -1,4 +1,5 @@
 ---
+version: 1.0.0
 name: unity-addressables
 description: Manage Unity Addressables groups and content with unity-cli. Use when the user asks to list or create groups, add or remove entries, build or clean Addressables content, or analyze and fix Addressables issues before a build. Do not use for generic asset import settings or material editing; use asset management for those tasks.
 allowed-tools: Bash, Read, Grep, Glob

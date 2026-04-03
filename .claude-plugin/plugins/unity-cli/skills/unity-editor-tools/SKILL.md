@@ -1,4 +1,5 @@
 ---
+version: 1.0.0
 name: unity-editor-tools
 description: Inspect and control Unity Editor state with unity-cli. Use when the user asks to ping the editor, read console output, inspect or update project settings, run menu items, inspect windows or selection, manage packages, or capture profiler data. Do not use for scene creation, asset editing, or C# refactors that have their own dedicated skills.
 allowed-tools: Bash, Read, Grep, Glob

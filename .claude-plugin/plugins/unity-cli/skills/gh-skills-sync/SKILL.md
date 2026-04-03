@@ -1,4 +1,5 @@
 ---
+version: 1.0.0
 name: gh-skills-sync
 description: Sync the gh-* automation skills from the upstream skills repository into Codex and project skill directories. Use when the user asks to refresh, check, or pin `gh-fix-ci`, `gh-fix-issue`, `gh-pr`, or `gh-pr-check` in this repo or the global Codex install. Do not use for updating unity-cli workflow skills; edit those skill folders directly.
 allowed-tools: Bash, Read, Grep, Glob

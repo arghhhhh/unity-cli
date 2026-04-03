@@ -1,4 +1,5 @@
 ---
+version: 1.0.0
 name: unity-scene-inspect
 description: Inspect Unity scenes without mutating them. Use when the user asks to analyze scene hierarchy, list scenes, find GameObjects by name or component, inspect component values, review object references, or query animator state. Do not use for creating scenes or editing GameObjects; use the creation or editing skills for those workflows.
 allowed-tools: Bash, Read, Grep, Glob
