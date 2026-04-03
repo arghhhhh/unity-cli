@@ -1,4 +1,12 @@
-# unity-cli
+# unity-cli (fork)
+
+> **This is a fork of [akiojin/unity-cli](https://github.com/akiojin/unity-cli)** with the following additions:
+>
+> - **Unity 2022.3 LTS compatibility** — preprocessor directives for API differences between Unity 2022.3 and Unity 6 (Rigidbody damping, Physics2D bounce threshold, variable scoping)
+> - **Internal visibility fixes** — `CommandContext` and `MetricAggregate` accessibility fixes for CS0052 in Unity 2022.3
+> - **Enhanced skills** — parameter name reference tables in skills to prevent `$.fieldName` errors, bridge package checks, and error recovery guidance
+>
+> **If you are using Unity 2022.3 LTS, install from this fork instead of the upstream repo.**
 
 [日本語](README.ja.md) | [中文](README.zh.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [Italiano](README.it.md) | [Español](README.es.md)
 
@@ -43,7 +51,7 @@ No additional setup is required - just clone the repository.
 ### Quick Install (recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/akiojin/unity-cli/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/arghhhhh/unity-cli/main/scripts/install.sh | sh
 ```
 
 This downloads the latest release binary to `~/.unity/tools/unity-cli/{rid}/`
@@ -62,11 +70,11 @@ Set `UNITY_CLI_NO_AUTO_UPDATE=1` to disable auto-update.
 ### Manual Install
 
 Download the latest binary from [GitHub
-Releases](https://github.com/akiojin/unity-cli/releases), or install from a
+Releases](https://github.com/arghhhhh/unity-cli/releases), or install from a
 local checkout:
 
 ```bash
-git clone https://github.com/akiojin/unity-cli.git
+git clone https://github.com/arghhhhh/unity-cli.git
 cd unity-cli
 cargo install --path .
 ```
@@ -82,7 +90,7 @@ openupm add com.akiojin.unity-cli-bridge
 **Git URL** (Unity Package Manager):
 
 ```text
-https://github.com/akiojin/unity-cli.git?path=UnityCliBridge/Packages/unity-cli-bridge
+https://github.com/arghhhhh/unity-cli.git?path=UnityCliBridge/Packages/unity-cli-bridge
 ```
 
 Connection check:
