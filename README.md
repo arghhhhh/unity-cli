@@ -6,7 +6,7 @@
 > - **Internal visibility fixes** — `CommandContext` and `MetricAggregate` accessibility fixes for CS0052 in Unity 2022.3
 > - **Enhanced skills** — parameter name reference tables in skills to prevent `$.fieldName` errors, bridge package checks, and error recovery guidance
 >
-> **If you are using Unity 2022.3 LTS, install from this fork instead of the upstream repo.**
+> **Install from this fork instead of the upstream repo.**
 
 [日本語](README.ja.md) | [中文](README.zh.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [Italiano](README.it.md) | [Español](README.es.md)
 
@@ -81,11 +81,7 @@ cargo install --path .
 
 Unity-side bridge package (choose one):
 
-**OpenUPM** (recommended):
-
-```bash
-openupm add com.akiojin.unity-cli-bridge
-```
+~~**OpenUPM**: `openupm add com.akiojin.unity-cli-bridge`~~ *(installs the upstream package — use the Git URL below instead)*
 
 **Git URL** (Unity Package Manager):
 
