@@ -47,6 +47,9 @@ namespace UnityCliBridge.Tests.PlayMode
             AssertNoError(inputState);
             CollectionAssert.Contains(((JArray)inputState["keyboard"]?["pressedKeys"])?.Select(token => token.ToString()).ToList(), "space");
             StringAssert.Contains("KeyboardPressed=space", GetStatusText());
+            // The press must arrive as a real event so game code sees the
+            // wasPressedThisFrame edge (regression: direct state writes never did).
+            Assert.AreEqual(1, GetStatusInt("KeyboardPresses"), "Expected exactly one wasPressedThisFrame edge. Status:\n" + GetStatusText());
 
             var keyboardRelease = InvokeInputHandler("SimulateKeyboardInput", new JObject
             {
@@ -56,6 +59,7 @@ namespace UnityCliBridge.Tests.PlayMode
             AssertNoError(keyboardRelease);
             yield return null;
             StringAssert.Contains("KeyboardPressed=(none)", GetStatusText());
+            Assert.AreEqual(1, GetStatusInt("KeyboardReleases"), "Expected exactly one wasReleasedThisFrame edge. Status:\n" + GetStatusText());
 
             var keyboardType = InvokeInputHandler("SimulateKeyboardInput", new JObject
             {
@@ -367,7 +371,7 @@ namespace UnityCliBridge.Tests.PlayMode
 
         private static int GetStatusInt(string key)
         {
-            var match = Regex.Match(GetStatusText(), "^" + Regex.Escape(key) + "=(\\d+)$", RegexOptions.Multiline);
+            var match = Regex.Match(GetStatusText(), "^" + Regex.Escape(key) + "=(\\d+)\\r?$", RegexOptions.Multiline);
             return match.Success ? int.Parse(match.Groups[1].Value) : 0;
         }
     }
