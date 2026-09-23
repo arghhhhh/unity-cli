@@ -5,7 +5,9 @@ use anyhow::{bail, Result};
 
 use super::endpoint::{resolve_endpoint, ResolvedEndpoint};
 
-const DEFAULT_HOST: &str = "localhost";
+// Prefer the loopback literal over "localhost": on Windows the hostname resolves
+// to ::1 first, and the failed IPv6 connect adds ~2s to every invocation.
+const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 6400;
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 const LEGACY_ENV_PREFIX: &str = concat!("UNITY_", "M", "CP_");
@@ -207,7 +209,7 @@ mod tests {
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
         env::remove_var("UNITY_CLI_HOST");
-        assert_eq!(default_host(), "localhost");
+        assert_eq!(default_host(), "127.0.0.1");
     }
 
     #[test]
@@ -247,7 +249,7 @@ mod tests {
 
         let context = ExecutionContext::from_overrides(&RuntimeOverrides::default())
             .expect("context should resolve");
-        assert_eq!(context.endpoint.host, "localhost");
+        assert_eq!(context.endpoint.host, "127.0.0.1");
         assert_eq!(context.endpoint.port, 6400);
 
         std::env::remove_var("UNITY_CLI_REGISTRY_PATH");

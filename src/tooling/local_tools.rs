@@ -815,7 +815,7 @@ fn default_runtime_config() -> RuntimeConfig {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "localhost".to_string());
+        .unwrap_or_else(|| "127.0.0.1".to_string());
     let port = env::var("UNITY_CLI_PORT")
         .ok()
         .and_then(|value| value.trim().parse::<u16>().ok())
@@ -843,6 +843,7 @@ fn call_remote_tool_sync(tool_name: &str, params: Value) -> Result<Value> {
         match unityd::try_call_tool(tool_name, &params, &config).await {
             Ok(value) => Ok(value),
             Err(error) if error.is_transport() => {
+                crate::app::runner::warn_daemon_unavailable();
                 let mut client = UnityClient::connect(&config).await.with_context(|| {
                     format!(
                         "Failed to connect to Unity at {}:{}",

@@ -463,6 +463,19 @@ async fn execute_tool(cli: &Cli, tool_name: &str, params: Value) -> Result<Value
     Ok(value)
 }
 
+/// The unityd daemon holds a warm connection to the Editor; without it every
+/// invocation pays cold-connection setup (~2s on Windows). The direct-TCP
+/// fallback keeps working, so the cost is otherwise invisible -- warn loudly
+/// instead of silently degrading.
+pub fn warn_daemon_unavailable() {
+    if std::env::var_os("UNITY_CLI_NO_DAEMON_WARNING").is_some() {
+        return;
+    }
+    eprintln!(
+        "warning: unityd daemon unavailable; falling back to direct TCP (~2s per call instead of ~0.2s). Start it with `unity-cli unityd start`, or set UNITY_CLI_NO_DAEMON_WARNING=1 to silence."
+    );
+}
+
 async fn call_remote_tool_with_timing(
     config: &RuntimeConfig,
     tool_name: &str,
@@ -503,7 +516,7 @@ async fn call_remote_tool_with_timing(
                 }),
             ));
         }
-        Err(error) if error.is_transport() => {}
+        Err(error) if error.is_transport() => warn_daemon_unavailable(),
         Err(error) => return Err(error.into()),
     }
 
@@ -563,6 +576,7 @@ async fn execute_batch(cli: &Cli, json_str: Option<&str>, use_stdin: bool) -> Re
         match unityd::try_batch(commands, &config).await {
             Ok(value) => return Ok(value),
             Err(error) if error.is_transport() => {
+                warn_daemon_unavailable();
                 let commands2: Vec<BatchItem> = serde_json::from_str(&raw)
                     .context("Batch input must be a JSON array of {tool, params}")?;
                 return execute_batch_direct(&config, commands2).await;
