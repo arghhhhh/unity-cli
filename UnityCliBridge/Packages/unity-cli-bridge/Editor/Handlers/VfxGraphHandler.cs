@@ -1007,6 +1007,72 @@ namespace UnityCliBridge.Handlers
             return set;
         }
 
+        // Required arguments per `vfx_apply` op, checked before the graph is touched.
+        // Deliberately weaker than each handler's own guard: this only trips when a
+        // parameter is ABSENT, never when it is present-but-empty, so it can never reject
+        // a call the handler would have accepted. The handler guards remain authoritative.
+        // Runtime ops that dereference `value`; guarded so a missing value returns an
+        // error instead of a NullReferenceException surfacing as a bridge fault.
+        private static readonly HashSet<string> s_RuntimeValueOps = new HashSet<string>
+        {
+            "set_float", "set_int", "set_bool", "set_vector2", "set_vector3", "set_vector4",
+        };
+
+        private static readonly Dictionary<string, string[]> s_RequiredApplyArgs =
+            new Dictionary<string, string[]>
+            {
+            ["add_block"] = new[] { "blockName" },
+            ["add_context"] = new[] { "contextName" },
+            ["add_custom_attribute"] = new[] { "attributeName", "attributeType" },
+            ["add_operator"] = new[] { "operatorName" },
+            ["add_parameter"] = new[] { "parameterName", "type" },
+            ["convert_to_inline"] = new[] { "target" },
+            ["convert_to_property"] = new[] { "target" },
+            ["create_from_template"] = new[] { "targetPath", "template" },
+            ["create_subgraph_asset"] = new[] { "kind", "subgraphPath" },
+            ["designate_template"] = new[] { "name" },
+            ["group_nodes"] = new[] { "nodes", "title" },
+            ["insert_template"] = new[] { "template" },
+            ["link_flow"] = new[] { "from", "to" },
+            ["link_slots"] = new[] { "from", "to" },
+            ["move_node"] = new[] { "position", "target" },
+            ["remove_sticky_note"] = new[] { "index" },
+            ["rename_category"] = new[] { "newCategory" },
+            ["rename_operator_input"] = new[] { "index", "name" },
+            ["reorder_block"] = new[] { "toIndex" },
+            ["reorder_category"] = new[] { "toIndex" },
+            ["reorder_operator_input"] = new[] { "index", "toIndex" },
+            ["reorder_sticky_note"] = new[] { "index", "toIndex" },
+            ["set_block_enabled"] = new[] { "enabled" },
+            ["set_block_setting"] = new[] { "setting", "value" },
+            ["set_context_setting"] = new[] { "setting", "value" },
+            ["set_initial_event_name"] = new[] { "eventName" },
+            ["set_operator_operand_type"] = new[] { "operandType" },
+            ["set_operator_setting"] = new[] { "setting", "value" },
+            ["set_parameter_category"] = new[] { "category" },
+            ["set_slot_space"] = new[] { "space", "target" },
+            ["set_slot_value"] = new[] { "target", "value" },
+            ["set_system_name"] = new[] { "name" },
+            ["unlink_flow"] = new[] { "from", "to" },
+            ["unlink_slots"] = new[] { "target" },
+            ["update_sticky_note"] = new[] { "index" },
+            };
+
+        /// <summary>
+        /// Validates that required arguments are present without loading the graph.
+        /// Returns an error object when one is missing, otherwise null.
+        /// </summary>
+        private static object ValidateApplyArgs(string op, JObject parameters)
+        {
+            if (string.IsNullOrEmpty(op)) return null;
+            if (!s_RequiredApplyArgs.TryGetValue(op, out var required)) return null;
+            foreach (var name in required)
+            {
+                if (parameters?[name] == null || parameters[name].Type == JTokenType.Null)
+                    return new { error = $"{name} is required" };
+            }
+            return null;
+        }
         public static object Apply(JObject parameters)
         {
             s_LastCompile = null;
@@ -1014,6 +1080,10 @@ namespace UnityCliBridge.Handlers
             {
                 var op = parameters?["op"]?.ToString();
                 var assetPath = parameters?["assetPath"]?.ToString();
+                // Validate before Fingerprint: Fingerprint -> DescribeGraphCore -> LoadGraph,
+                // so a missing argument would otherwise load the graph before being rejected.
+                var argError = ValidateApplyArgs(op, parameters);
+                if (argError != null) return argError;
                 bool track = !string.IsNullOrEmpty(op) && !s_NonTrackedOps.Contains(op) && !string.IsNullOrEmpty(assetPath);
                 Dictionary<int, string> before = track ? Fingerprint(assetPath) : null;
                 var result = ApplyCore(parameters);
@@ -6279,10 +6349,12 @@ namespace UnityCliBridge.Handlers
                     throw new Exception("instancingMode property not found on VisualEffectResource (VFX package too old?).");
                 object modeValue;
                 try { modeValue = Enum.Parse(modeProp.PropertyType, modeStr, true); }
-                catch (Exception e)
+                catch (Exception)
                 {
+                    // Caller error, not a bridge fault: return it quietly rather than
+                    // throwing into Fail() -> BridgeLogger.LogError -> Debug.LogError.
                     var names = string.Join(", ", Enum.GetNames(modeProp.PropertyType));
-                    throw new Exception($"Invalid mode '{modeStr}': {e.Message}. Supported: {names}.");
+                    return new { error = $"Invalid mode '{modeStr}'. Supported: {names}." };
                 }
                 modeProp.SetValue(resource, modeValue);
                 appliedMode = new JValue(modeValue.ToString());
@@ -6638,6 +6710,11 @@ namespace UnityCliBridge.Handlers
             var gameObject = parameters?["gameObject"]?.ToString();
             if (string.IsNullOrEmpty(gameObject))
                 return new { error = "gameObject is required (name of a scene object with a VisualEffect)" };
+
+            // Validate before touching the scene: FindVisualEffect throws when the object
+            // is absent, which would surface a caller error as a bridge fault.
+            if (s_RuntimeValueOps.Contains(op) && parameters?["value"] == null)
+                return new { error = "value is required" };
 
             if (op == "set_asset")
             {

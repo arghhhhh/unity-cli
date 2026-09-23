@@ -31,6 +31,52 @@ namespace UnityCliBridge.Tests
             StringAssert.Contains(expectedSubstring, error);
         }
 
+        // ---- Regression: validate before touching the graph (Refs #226) ---------
+
+        // A missing required argument must be rejected before the graph is loaded.
+        // assetPath points at a file that does not exist: if the graph were loaded
+        // first, the error would be about the missing asset rather than the argument.
+        [Test]
+        public void Apply_MissingRequiredArg_RejectsBeforeLoadingGraph()
+        {
+            AssertError(VfxGraphHandler.Apply(new JObject
+            {
+                ["op"] = "add_block",
+                ["assetPath"] = "Assets/__does_not_exist__.vfx"
+            }), "blockName is required");
+        }
+
+        [TestCase("set_block_setting", "setting")]
+        [TestCase("add_operator", "operatorName")]
+        [TestCase("link_slots", "from")]
+        [TestCase("move_node", "position")]
+        public void Apply_MissingRequiredArg_IsQuietAndDoesNotLoad(string op, string missing)
+        {
+            AssertError(VfxGraphHandler.Apply(new JObject
+            {
+                ["op"] = op,
+                ["assetPath"] = "Assets/__does_not_exist__.vfx"
+            }), missing + " is required");
+        }
+
+        // A missing runtime value must be an error response, not a
+        // NullReferenceException routed through Fail() into Debug.LogError.
+        // Unity fails a test on any unexpected logged error, so reaching the
+        // assertion at all proves nothing was logged.
+        [TestCase("set_float")]
+        [TestCase("set_int")]
+        [TestCase("set_bool")]
+        [TestCase("set_vector3")]
+        public void Runtime_MissingValue_ReturnsQuietError(string op)
+        {
+            AssertError(VfxGraphHandler.Runtime(new JObject
+            {
+                ["op"] = op,
+                ["gameObject"] = "__no_such_object__",
+                ["name"] = "SomeProperty"
+            }), "value is required");
+        }
+
         [Test]
         public void Apply_WithUnsupportedOp_ReturnsDescriptiveError()
         {
@@ -1559,6 +1605,23 @@ namespace UnityCliBridge.Tests
             });
             JObject restored = ToJObject(VfxGraphHandler.DescribeGraph(new JObject { ["assetPath"] = copy }));
             CollectionAssert.AreEqual(new[] { "Alpha", "Bravo", "Charlie" }, Titles(restored));
+        }
+
+        // An invalid instancing mode is a caller error: it must come back as an error
+        // response, not throw into Fail() -> BridgeLogger.LogError -> Debug.LogError.
+        // Unity fails a test on any unexpected logged error, so reaching the assertion
+        // without an expected-log directive proves nothing was logged. (Refs #226)
+        [Test]
+        public void ApplySetInstancing_WithInvalidMode_ReturnsQuietError()
+        {
+            string copy = CopyFixture("instancing_invalid");
+
+            AssertError(VfxGraphHandler.Apply(new JObject
+            {
+                ["op"] = "set_instancing",
+                ["assetPath"] = copy,
+                ["mode"] = "NotARealMode"
+            }), "Invalid mode");
         }
 
         [Test]
