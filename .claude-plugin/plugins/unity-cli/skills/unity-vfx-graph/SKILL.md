@@ -4,7 +4,7 @@ description: Author and inspect Unity Visual Effect Graph (vfx) assets with unit
 allowed-tools: Bash(unity-cli:*), Read, Grep, Glob
 metadata:
   author: akiojin
-  version: 0.34.0
+  version: 0.35.0
   category: assets
   triggers:
     - vfx
@@ -53,6 +53,8 @@ unity-cli raw vfx_apply --json '{"op":"add_block","assetPath":"Assets/FX/Burst.v
 unity-cli raw vfx_apply --json '{"op":"add_operator","assetPath":"Assets/FX/Burst.vfx","operatorName":"Multiply"}'
 unity-cli raw vfx_apply --json '{"op":"link_slots","assetPath":"Assets/FX/Burst.vfx","from":{"node":"operator","operatorIndex":0,"slot":0},"to":{"node":"block","contextType":"Update","blockIndex":0,"slot":0}}'
 unity-cli raw vfx_apply --json '{"op":"add_parameter","assetPath":"Assets/FX/Burst.vfx","parameterName":"Rate","type":"Float","value":42.5,"min":0,"max":100}'
+unity-cli raw vfx_describe_graph --json '{"assetPath":"Assets/FX/Burst.vfx","include":["errors"],"includeSlots":false}'
+unity-cli raw vfx_apply --json '{"op":"add_block","assetPath":"Assets/FX/Burst.vfx","contextType":"Update","blockName":"Turbulence","autoCompile":false}'
 unity-cli raw vfx_apply --json '{"op":"compile","assetPath":"Assets/FX/Burst.vfx"}'
 unity-cli raw vfx_apply --json '{"op":"auto_layout","assetPath":"Assets/FX/Burst.vfx"}'
 unity-cli raw vfx_apply --json '{"op":"group_nodes","assetPath":"Assets/FX/Burst.vfx","title":"Liquid turbulence","nodes":[{"node":"parameter","parameterIndex":12},{"node":"operator","operatorIndex":3}],"note":{"title":"Liquid turbulence","contents":"Relative-mode Perlin turbulence: Drag pulls velocity toward the noise field."}}'
@@ -60,6 +62,8 @@ unity-cli raw vfx_apply --json '{"op":"group_nodes","assetPath":"Assets/FX/Burst
 
 ## Hard Rules
 
+- **Describe narrowly on a big graph.** An unfiltered `vfx_describe_graph` on a real graph is huge — a working hand-made graph returns ~450 KB (~112K tokens), which will swamp your context. Pass `includeSlots:false` to drop the slot trees that dominate it (-61%), and `include:[...]` to keep only the top-level sections you need (`include:["errors"]` + `includeSlots:false` is ~1K tokens). Counts and `assetPath` always survive, and `slotsOmitted:true` marks a filtered read so empty slot arrays are never mistaken for "no slots". Use the full describe only when you actually need slot values.
+- **Batch edits with `autoCompile:false`.** Every op recompiles by default, and the cost grows with the graph — 20 `add_block` ops cost ~34s eagerly and ~8s deferred (4.4x). Pass `autoCompile:false` on each op in a run of edits, then one `vfx_apply op:"compile"` to flush (it reports `flushedDeferred`). **Deferred edits live in memory until that compile** — a domain reload (script recompile, play-mode enter) before it discards them, so keep a deferred run short and always close it with `compile`. A deferred op response carries `compile.deferred:true` instead of a compile summary, so rule 3 above (read `compile.success`) applies to the flushing `compile` call instead.
 - **Custom HLSL operator: at most 4 inputs.** A VFX expression takes at most 4 parents, so a Custom HLSL *operator* whose function has 5+ parameters makes the asset stop compiling. `set_operator_setting`/`add_operator` refuse such a function with a clear error; pack inputs into `float2/3/4` or split the function. Custom HLSL *blocks* have no such limit.
 - **Addressing.** Block ops take `contextType` (first context of that type) **or** `contextIndex` (absolute index from describe). Context ops (`set_context_setting`, `remove_context`, `delete_system`, `set_system_name`, `set_bounds`, `link_flow`/`unlink_flow` endpoints) take `contextType` or `index` — `contextIndex` is accepted as an alias everywhere. Prefer the index whenever a graph has two contexts of the same type.
 - **New nodes take open space.** Add/duplicate/insert ops and `add_sticky_note` refuse to drop a node on an existing one: if the spot is taken (auto or explicit `position`) the node is moved to the nearest free space and the response says `positionAdjusted: true`. Read the returned `position` rather than assuming the one you asked for.
