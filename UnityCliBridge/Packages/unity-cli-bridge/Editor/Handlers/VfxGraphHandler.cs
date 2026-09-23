@@ -298,6 +298,9 @@ namespace UnityCliBridge.Handlers
             var assetPath = parameters?["assetPath"]?.ToString();
             if (string.IsNullOrEmpty(assetPath))
                 return new { error = "assetPath is required" };
+            bool includeSlots = parameters?["includeSlots"] == null
+                || parameters["includeSlots"].Type == JTokenType.Null
+                || parameters["includeSlots"].ToObject<bool>();
             var graph = LoadGraph(assetPath);
 
             // Collect contexts and operators first so links can be resolved to stable indices.
@@ -457,6 +460,10 @@ namespace UnityCliBridge.Handlers
             JArray SlotsJson(object container, bool isInput)
             {
                 var arr = new JArray();
+                // includeSlots:false -- slot trees dominate the payload (a large graph describes
+                // at ~450 KB, most of it slots). `slotsOmitted` on the response says the empty
+                // arrays mean "not reported", not "none".
+                if (!includeSlots) return arr;
                 IEnumerable coll;
                 try { coll = Prop(container, isInput ? "inputSlots" : "outputSlots") as IEnumerable; }
                 catch { return arr; }
@@ -689,7 +696,7 @@ namespace UnityCliBridge.Handlers
             var includeErrors = parameters?["includeErrors"]?.ToObject<bool>() ?? true;
             JArray errors = includeErrors ? AllErrors(graph, assetPath) : null;
 
-            return new JObject
+            var described = new JObject
             {
                 ["assetPath"] = assetPath,
                 ["contextCount"] = contexts.Count,
@@ -713,6 +720,35 @@ namespace UnityCliBridge.Handlers
                 ["layout"] = LayoutJson(graph),
                 ["touched"] = TouchedJson(assetPath, ctxList, opList, paramList)
             };
+            if (!includeSlots) described["slotsOmitted"] = true;
+            return FilterDescribeSections(described, parameters?["include"] as JArray);
+        }
+
+        /// <summary>
+        /// `include` filter: keep only the named top-level sections. Identity keys (assetPath,
+        /// slotsOmitted) and every *Count field are always kept, so a filtered describe still
+        /// reports the true size of what it left out. Unknown names are reported rather than
+        /// silently ignored, so a typo does not look like an empty graph.
+        /// </summary>
+        private static object FilterDescribeSections(JObject described, JArray include)
+        {
+            if (include == null || include.Count == 0) return described;
+            var wanted = new HashSet<string>(include.Select(t => t.ToString()),
+                StringComparer.OrdinalIgnoreCase);
+            var unknown = wanted.Where(w => described[w] == null).OrderBy(w => w).ToList();
+            if (unknown.Count > 0)
+                return new { error = $"Unknown include section(s): {string.Join(", ", unknown)}. "
+                    + $"Available: {string.Join(", ", described.Properties().Select(p => p.Name).OrderBy(n => n))}." };
+            var filtered = new JObject();
+            foreach (var prop in described.Properties())
+            {
+                bool keep = wanted.Contains(prop.Name)
+                    || prop.Name == "assetPath"
+                    || prop.Name == "slotsOmitted"
+                    || prop.Name.EndsWith("Count", StringComparison.Ordinal);
+                if (keep) filtered[prop.Name] = prop.Value;
+            }
+            return filtered;
         }
 
         /// <summary>The nodes recorded as touched this session, resolved to describe indices.</summary>
@@ -1084,6 +1120,12 @@ namespace UnityCliBridge.Handlers
                 // so a missing argument would otherwise load the graph before being rejected.
                 var argError = ValidateApplyArgs(op, parameters);
                 if (argError != null) return argError;
+                // autoCompile:false defers the recompile so a batch of ops pays for one compile
+                // instead of N. The explicit `compile` op always compiles.
+                s_DeferCompile = op != "compile"
+                    && parameters?["autoCompile"] != null
+                    && parameters["autoCompile"].Type != JTokenType.Null
+                    && !parameters["autoCompile"].ToObject<bool>();
                 bool track = !string.IsNullOrEmpty(op) && !s_NonTrackedOps.Contains(op) && !string.IsNullOrEmpty(assetPath);
                 Dictionary<int, string> before = track ? Fingerprint(assetPath) : null;
                 var result = ApplyCore(parameters);
@@ -1105,6 +1147,7 @@ namespace UnityCliBridge.Handlers
                 return result;
             }
             catch (Exception ex) { return Fail("vfx_apply", ex); }
+            finally { s_DeferCompile = false; }
         }
 
         private static object ApplyCore(JObject parameters)
@@ -1270,6 +1313,11 @@ namespace UnityCliBridge.Handlers
         private static readonly List<(LogType type, string message)> s_ImportLogs =
             new List<(LogType, string)>();
         private static bool s_CapturingImportLogs;
+        // When set, `Persist` writes the asset but skips the reimport/recompile. Every vfx_apply
+        // op otherwise triggers its own recompile, so batching N edits costs N recompiles.
+        private static bool s_DeferCompile;
+        private static readonly HashSet<string> s_PendingCompile = new HashSet<string>();
+
         private static JObject s_LastCompile;
         private static readonly Dictionary<string, JObject> s_LastCompileByAsset =
             new Dictionary<string, JObject>(StringComparer.OrdinalIgnoreCase);
@@ -1387,6 +1435,17 @@ namespace UnityCliBridge.Handlers
         private static JObject Persist(object graph, string assetPath)
         {
             Call(graph, GraphType, "SetExpressionGraphDirty", true);
+            if (s_DeferCompile)
+            {
+                // Skip both the asset write and the reimport. The graph stays live in memory
+                // (GetOrCreateGraph caches it per resource), so later ops build on it and one
+                // `compile` op writes and compiles the whole batch once. Edits are in-memory
+                // until then: a domain reload before `compile` discards them.
+                s_PendingCompile.Add(assetPath);
+                var deferred = new JObject { ["deferred"] = true, ["assetPath"] = assetPath };
+                s_LastCompile = deferred;
+                return deferred;
+            }
             var resource = Prop(graph, "visualEffectResource");
             Call(null, ResourceExtType, "WriteAssetWithSubAssets", resource);
             lock (s_ImportLogs) s_ImportLogs.Clear();
@@ -1409,12 +1468,14 @@ namespace UnityCliBridge.Handlers
         {
             var assetPath = parameters?["assetPath"]?.ToString();
             var graph = LoadGraph(assetPath);
+            bool hadPending = s_PendingCompile.Remove(assetPath);
             var compile = Persist(graph, assetPath);
             var validation = CollectErrors(graph);
             return new JObject
             {
                 ["op"] = "compile",
                 ["assetPath"] = assetPath,
+                ["flushedDeferred"] = hadPending,
                 ["compile"] = compile,
                 ["validationErrors"] = validation,
                 ["ok"] = (bool)compile["success"]

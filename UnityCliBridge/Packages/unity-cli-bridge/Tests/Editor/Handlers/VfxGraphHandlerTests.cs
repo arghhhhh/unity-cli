@@ -1611,6 +1611,116 @@ namespace UnityCliBridge.Tests
         // response, not throw into Fail() -> BridgeLogger.LogError -> Debug.LogError.
         // Unity fails a test on any unexpected logged error, so reaching the assertion
         // without an expected-log directive proves nothing was logged. (Refs #226)
+        // ---- Deferred compile + describe filtering (Refs #226) -----------------
+
+        [Test]
+        public void ApplyWithAutoCompileFalse_DefersTheRecompile()
+        {
+            string copy = CopyFixture("defer_compile");
+
+            JObject deferred = ToJObject(VfxGraphHandler.Apply(new JObject
+            {
+                ["op"] = "add_block", ["assetPath"] = copy,
+                ["contextType"] = "Update", ["blockName"] = "Turbulence",
+                ["autoCompile"] = false
+            }));
+            Assert.IsNull(deferred.Value<string>("error"), $"unexpected error: {deferred}");
+            Assert.IsTrue(deferred["compile"].Value<bool>("deferred"),
+                $"expected a deferred compile marker; got: {deferred["compile"]}");
+
+            JObject flush = ToJObject(VfxGraphHandler.Apply(new JObject
+            {
+                ["op"] = "compile", ["assetPath"] = copy
+            }));
+            Assert.IsTrue(flush.Value<bool>("flushedDeferred"),
+                "compile should report that it flushed deferred work");
+            Assert.IsTrue(flush["compile"].Value<bool>("success"), $"compile failed: {flush}");
+        }
+
+        // Deferring must not change the result, only when the recompile happens.
+        [Test]
+        public void DeferredBatch_ProducesTheSameGraphAsAutoCompile()
+        {
+            string[] BlockNames(string path)
+            {
+                JObject d = ToJObject(VfxGraphHandler.DescribeGraph(new JObject { ["assetPath"] = path }));
+                return d["contexts"].SelectMany(c => c["blocks"] ?? new JArray())
+                    .Select(b => b.Value<string>("name")).ToArray();
+            }
+            void Add(string path, bool auto)
+            {
+                var p = new JObject
+                {
+                    ["op"] = "add_block", ["assetPath"] = path,
+                    ["contextType"] = "Update", ["blockName"] = "Turbulence"
+                };
+                if (!auto) p["autoCompile"] = false;
+                JObject r = ToJObject(VfxGraphHandler.Apply(p));
+                Assert.IsNull(r.Value<string>("error"), $"unexpected error: {r}");
+            }
+
+            string eager = CopyFixture("defer_eager");
+            for (int i = 0; i < 3; i++) Add(eager, true);
+
+            string lazy = CopyFixture("defer_lazy");
+            for (int i = 0; i < 3; i++) Add(lazy, false);
+            VfxGraphHandler.Apply(new JObject { ["op"] = "compile", ["assetPath"] = lazy });
+
+            CollectionAssert.AreEqual(BlockNames(eager), BlockNames(lazy),
+                "deferred compile must not change the resulting graph");
+        }
+
+        [Test]
+        public void DescribeWithIncludeSlotsFalse_OmitsSlotsAndFlagsIt()
+        {
+            string copy = CopyFixture("describe_noslots");
+
+            JObject full = ToJObject(VfxGraphHandler.DescribeGraph(new JObject { ["assetPath"] = copy }));
+            JObject lean = ToJObject(VfxGraphHandler.DescribeGraph(new JObject
+            {
+                ["assetPath"] = copy, ["includeSlots"] = false
+            }));
+
+            Assert.IsNull(full["slotsOmitted"], "the unfiltered describe should not flag omission");
+            Assert.IsTrue(lean.Value<bool>("slotsOmitted"), "omission must be flagged");
+            Assert.AreEqual(full.Value<int>("contextCount"), lean.Value<int>("contextCount"),
+                "counts must survive filtering");
+            Assert.Less(lean.ToString(Newtonsoft.Json.Formatting.None).Length,
+                full.ToString(Newtonsoft.Json.Formatting.None).Length,
+                "omitting slots should shrink the payload");
+        }
+
+        [Test]
+        public void DescribeWithInclude_KeepsOnlyNamedSectionsAndCounts()
+        {
+            string copy = CopyFixture("describe_include");
+
+            JObject only = ToJObject(VfxGraphHandler.DescribeGraph(new JObject
+            {
+                ["assetPath"] = copy,
+                ["include"] = new JArray { "contexts" }
+            }));
+
+            Assert.IsNotNull(only["contexts"], "the requested section must be present");
+            Assert.IsNotNull(only["assetPath"], "identity keys are always kept");
+            Assert.IsNotNull(only["operatorCount"], "*Count fields are always kept");
+            Assert.IsNull(only["operators"], "unrequested sections must be dropped");
+            Assert.IsNull(only["layout"], "unrequested sections must be dropped");
+        }
+
+        // A typo must not look like an empty graph.
+        [Test]
+        public void DescribeWithUnknownIncludeSection_ReturnsError()
+        {
+            string copy = CopyFixture("describe_bad_include");
+
+            AssertError(VfxGraphHandler.DescribeGraph(new JObject
+            {
+                ["assetPath"] = copy,
+                ["include"] = new JArray { "contexts", "nope" }
+            }), "Unknown include section");
+        }
+
         [Test]
         public void ApplySetInstancing_WithInvalidMode_ReturnsQuietError()
         {
