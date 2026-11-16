@@ -119,6 +119,103 @@ namespace UnityCliBridge.Tests.PlayMode
             yield return WaitForStatusContains("MouseScroll=0.0,10.0");
         }
 
+#if UNITY_EDITOR
+        // CLI commands run from EditorApplication.update, outside the player loop. A press
+        // sent from there must still be seen by game code as a press edge
+        // (wasPressedThisFrame / wasReleasedThisFrame), not only as a held state.
+        [UnityTest]
+        public IEnumerator KeyboardAndMouseButtons_FromEditorUpdate_ReportPressAndReleaseEdges()
+        {
+            Assert.IsTrue(Application.isPlaying, "Test must run in Play Mode");
+
+            EnsureBootstrap();
+            yield return WaitForHarnessReady();
+
+            int keyboardPresses = GetStatusInt("KeyboardPresses");
+            int keyboardReleases = GetStatusInt("KeyboardReleases");
+            int mousePresses = GetStatusInt("MousePresses");
+            int mouseReleases = GetStatusInt("MouseReleases");
+
+            yield return InvokeInputHandlerFromEditorUpdate(
+                "SimulateKeyboardInput",
+                new JObject { ["action"] = "press", ["key"] = "Space" }
+            );
+            yield return WaitForCondition(
+                () => GetStatusInt("KeyboardPresses") > keyboardPresses,
+                120
+            );
+
+            yield return InvokeInputHandlerFromEditorUpdate(
+                "SimulateKeyboardInput",
+                new JObject { ["action"] = "release", ["key"] = "Space" }
+            );
+            yield return WaitForCondition(
+                () => GetStatusInt("KeyboardReleases") > keyboardReleases,
+                120
+            );
+
+            yield return InvokeInputHandlerFromEditorUpdate(
+                "SimulateMouseInput",
+                new JObject
+                {
+                    ["action"] = "button",
+                    ["button"] = "left",
+                    ["buttonAction"] = "press",
+                }
+            );
+            yield return WaitForCondition(() => GetStatusInt("MousePresses") > mousePresses, 120);
+
+            yield return InvokeInputHandlerFromEditorUpdate(
+                "SimulateMouseInput",
+                new JObject
+                {
+                    ["action"] = "button",
+                    ["button"] = "left",
+                    ["buttonAction"] = "release",
+                }
+            );
+            yield return WaitForCondition(() => GetStatusInt("MouseReleases") > mouseReleases, 120);
+        }
+
+        private static IEnumerator InvokeInputHandlerFromEditorUpdate(
+            string methodName,
+            JObject parameters
+        )
+        {
+            JObject result = null;
+            System.Exception error = null;
+            bool done = false;
+            UnityEditor.EditorApplication.CallbackFunction callback = null;
+            callback = () =>
+            {
+                UnityEditor.EditorApplication.update -= callback;
+                try
+                {
+                    result = InvokeInputHandler(methodName, parameters);
+                }
+                catch (System.Exception e)
+                {
+                    error = e;
+                }
+                done = true;
+            };
+            UnityEditor.EditorApplication.update += callback;
+
+            for (int i = 0; i < DefaultTimeoutFrames && !done; i++)
+            {
+                yield return null;
+            }
+
+            UnityEditor.EditorApplication.update -= callback;
+            Assert.IsTrue(done, $"EditorApplication.update never ran {methodName}.");
+            if (error != null)
+            {
+                throw error;
+            }
+            AssertNoError(result);
+        }
+#endif
+
         [UnityTest]
         public IEnumerator GamepadAndTouchInput_AreObserved()
         {

@@ -143,7 +143,7 @@ status_value() {
   local key="$1"
   local text
   text="$(status_text)"
-  awk -F= -v key="${key}" '$1 == key { print substr($0, length(key) + 2) }' <<<"${text}" | tail -n 1
+  awk -F= -v key="${key}" '$1 == key { print substr($0, length(key) + 2) }' <<<"${text}" | tr -d '\r' | tail -n 1
 }
 
 wait_for_condition() {
@@ -197,6 +197,17 @@ assert_status_contains() {
   fi
 }
 
+# Waits until the game-side counter <key> (counted with wasPressedThisFrame /
+# wasReleasedThisFrame in the scene's Update) reaches at least <expected>.
+wait_for_status_int_ge() {
+  local key="$1"
+  local expected="$2"
+  local description="$3"
+  wait_for_condition \
+    "${description}" \
+    "actual=\"\$(status_value '${key}')\" && [[ -n \"\${actual}\" && \"\${actual}\" -ge ${expected} ]]"
+}
+
 assert_status_int_ge() {
   local key="$1"
   local expected="$2"
@@ -221,13 +232,17 @@ wait_for_play_state "true"
 wait_for_condition "input harness ready" "grep -Fq 'Ready=True' <<<\"\$(status_text)\""
 
 echo "--- Keyboard ---" | tee -a "${LOG}"
+keyboard_presses="$(status_value KeyboardPresses)"
+keyboard_releases="$(status_value KeyboardReleases)"
 run_tool "input_keyboard" '{"action":"press","key":"space"}'
 state="$(invoke_tool get_current_input_state '{}')"
 assert_json "${state}" '.keyboard.pressedKeys | index("space") != null' "keyboard press reflected in current state"
+wait_for_status_int_ge KeyboardPresses "$(( ${keyboard_presses:-0} + 1 ))" "game to observe keyboard press edge (wasPressedThisFrame)"
 
 run_tool "input_keyboard" '{"action":"release","key":"space"}'
 state="$(invoke_tool get_current_input_state '{}')"
 assert_json "${state}" '.keyboard.pressedKeys | index("space") == null' "keyboard release reflected in current state"
+wait_for_status_int_ge KeyboardReleases "$(( ${keyboard_releases:-0} + 1 ))" "game to observe keyboard release edge (wasReleasedThisFrame)"
 
 run_tool "input_keyboard" '{"action":"type","text":"Hi"}'
 wait_for_condition \
@@ -240,7 +255,11 @@ wait_for_condition \
   "mouse device reflected in current state" \
   "state=\"\$(invoke_tool get_current_input_state '{}')\" && jq -e '.mouse != null and (.activeDevices | index(\"mouse\") != null) and (.mouse.deviceCount >= 1)' >/dev/null <<<\"\${state}\""
 
+mouse_presses="$(status_value MousePresses)"
+mouse_releases="$(status_value MouseReleases)"
 run_tool "input_mouse" '{"action":"click","button":"left","clickCount":1}'
+wait_for_status_int_ge MousePresses "$(( ${mouse_presses:-0} + 1 ))" "game to observe mouse click press edge"
+wait_for_status_int_ge MouseReleases "$(( ${mouse_releases:-0} + 1 ))" "game to observe mouse click release edge"
 
 run_tool "input_mouse" '{"action":"button","button":"left","buttonAction":"press","holdSeconds":0.1}'
 sleep 0.15
