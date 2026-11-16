@@ -56,6 +56,12 @@ namespace UnityCliBridge.Handlers
 
         private static readonly List<TouchGesture> touchGestures = new List<TouchGesture>();
         private static int lastTouchUpdateFrame = -1;
+
+        // States queued for the next player input update, by device. Read-modify-write
+        // simulation steps (a click's release after its press, a click after a move in one
+        // batch) must build on what is already queued, not on the device's processed state.
+        private static readonly Dictionary<InputDevice, object> pendingQueuedStates = new Dictionary<InputDevice, object>();
+
         private static readonly System.Reflection.MethodInfo InputSystemUpdateWithType = typeof(InputSystem).GetMethod(
             "Update",
             System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic,
@@ -99,6 +105,8 @@ namespace UnityCliBridge.Handlers
             EditorApplication.update -= ProcessScheduledReleases;
             EditorApplication.update += ProcessScheduledReleases;
             InputSystem.onBeforeUpdate += ProcessTouchGestures;
+            InputSystem.onAfterUpdate -= ClearProcessedQueuedStates;
+            InputSystem.onAfterUpdate += ClearProcessedQueuedStates;
             EditorApplication.playModeStateChanged += OnTouchPlayModeChanged;
         }
 
@@ -120,7 +128,6 @@ namespace UnityCliBridge.Handlers
 
         private static object HandleKeyboardAction(JObject parameters)
         {
-            EnsureSimulationUpdateContext();
             ProcessScheduledReleases();
             string action = parameters?["action"]?.ToString();
 
@@ -168,7 +175,6 @@ namespace UnityCliBridge.Handlers
 
         private static object HandleMouseAction(JObject parameters)
         {
-            EnsureSimulationUpdateContext();
             ProcessScheduledReleases();
             string action = parameters?["action"]?.ToString();
 
@@ -219,7 +225,6 @@ namespace UnityCliBridge.Handlers
 
         private static object HandleGamepadAction(JObject parameters)
         {
-            EnsureSimulationUpdateContext();
             ProcessScheduledReleases();
             string action = parameters?["action"]?.ToString();
 
@@ -484,11 +489,52 @@ namespace UnityCliBridge.Handlers
             return new KeyboardState(keysArray);
         }
 
-        private static void ApplyStateChange<TState>(InputControl control, TState state)
-            where TState : struct
+        private static void ApplyStateChange<TState>(InputDevice device, TState state)
+            where TState : struct, IInputStateTypeInfo
         {
-            EnsureSimulationUpdateContext();
-            InputState.Change(control, state, GetSimulationUpdateType());
+            if (ShouldQueueForPlayerUpdate())
+            {
+                // CLI commands run from EditorApplication.update, between player frames.
+                // Changing state here (or in an input update forced from here) stamps the
+                // change with an update step that game code never runs in, so
+                // wasPressedThisFrame / wasReleasedThisFrame never fire. Queue it instead:
+                // the next player input update processes it like real device input.
+                InputSystem.QueueStateEvent(device, state);
+                pendingQueuedStates[device] = state;
+                return;
+            }
+
+            InputState.Change(device, state, GetSimulationUpdateType());
+        }
+
+        /// <summary>
+        /// Returns the device state that simulation should build on: the last state queued
+        /// for the next player update if one is still pending, else the device's state.
+        /// </summary>
+        private static TState ReadSimulationState<TState>(InputDevice device)
+            where TState : struct, IInputStateTypeInfo
+        {
+            if (pendingQueuedStates.TryGetValue(device, out var pending) && pending is TState pendingState)
+            {
+                return pendingState;
+            }
+
+            device.CopyState<TState>(out var state);
+            return state;
+        }
+
+        private static bool ShouldQueueForPlayerUpdate()
+        {
+            return Application.isPlaying && InputState.currentUpdateType == InputUpdateType.Editor;
+        }
+
+        private static void ClearProcessedQueuedStates()
+        {
+            // Queued events are consumed by the first player update after they were queued.
+            if (pendingQueuedStates.Count > 0 && InputState.currentUpdateType != InputUpdateType.Editor)
+            {
+                pendingQueuedStates.Clear();
+            }
         }
 
         private static void ApplyStateEvent(InputDevice device, InputEventPtr eventPtr)
@@ -810,7 +856,7 @@ namespace UnityCliBridge.Handlers
             
             Vector2 position = new Vector2(x, y);
 
-            mouse.CopyState<MouseState>(out var mouseState);
+            var mouseState = ReadSimulationState<MouseState>(mouse);
             if (absolute)
             {
                 mouseState.position = position;
@@ -847,12 +893,12 @@ namespace UnityCliBridge.Handlers
 
             for (int i = 0; i < clickCount; i++)
             {
-                mouse.CopyState<MouseState>(out var pressState);
+                var pressState = ReadSimulationState<MouseState>(mouse);
                 pressState = pressState.WithButton(mouseButton, true);
                 ApplyMouseButtonSnapshot(mouseButton, true);
                 ApplyStateChange(mouse, pressState);
 
-                mouse.CopyState<MouseState>(out var releaseState);
+                var releaseState = ReadSimulationState<MouseState>(mouse);
                 releaseState = releaseState.WithButton(mouseButton, false);
                 ApplyMouseButtonSnapshot(mouseButton, false);
                 ApplyStateChange(mouse, releaseState);
@@ -879,7 +925,7 @@ namespace UnityCliBridge.Handlers
             }
 
             float value = string.Equals(action, "release", StringComparison.OrdinalIgnoreCase) ? 0.0f : 1.0f;
-            mouse.CopyState<MouseState>(out var mouseState);
+            var mouseState = ReadSimulationState<MouseState>(mouse);
             mouseState = mouseState.WithButton(mouseButton, value > 0f);
             ApplyMouseButtonSnapshot(mouseButton, value > 0f);
             ApplyStateChange(mouse, mouseState);
@@ -920,24 +966,24 @@ namespace UnityCliBridge.Handlers
                 return new { error = $"Invalid mouse button: {button}" };
             }
 
-            mouse.CopyState<MouseState>(out var startState);
+            var startState = ReadSimulationState<MouseState>(mouse);
             startState.position = new Vector2(startX, startY);
             startState.delta = Vector2.zero;
             simulatedMousePosition = startState.position;
             ApplyStateChange(mouse, startState);
 
-            mouse.CopyState<MouseState>(out var pressState);
+            var pressState = ReadSimulationState<MouseState>(mouse);
             pressState = pressState.WithButton(mouseButton, true);
             ApplyMouseButtonSnapshot(mouseButton, true);
             ApplyStateChange(mouse, pressState);
 
-            mouse.CopyState<MouseState>(out var dragState);
+            var dragState = ReadSimulationState<MouseState>(mouse);
             dragState.delta = new Vector2(endX - startX, endY - startY);
             dragState.position = new Vector2(endX, endY);
             simulatedMousePosition = dragState.position;
             ApplyStateChange(mouse, dragState);
 
-            mouse.CopyState<MouseState>(out var releaseState);
+            var releaseState = ReadSimulationState<MouseState>(mouse);
             releaseState = releaseState.WithButton(mouseButton, false);
             ApplyMouseButtonSnapshot(mouseButton, false);
             ApplyStateChange(mouse, releaseState);
@@ -958,7 +1004,7 @@ namespace UnityCliBridge.Handlers
             float deltaX = parameters["deltaX"]?.ToObject<float>() ?? 0;
             float deltaY = parameters["deltaY"]?.ToObject<float>() ?? 0;
 
-            mouse.CopyState<MouseState>(out var mouseState);
+            var mouseState = ReadSimulationState<MouseState>(mouse);
             mouseState.scroll = new Vector2(deltaX, deltaY);
             simulatedMouseScroll = mouseState.scroll;
             ApplyStateChange(mouse, mouseState);
@@ -1029,7 +1075,7 @@ namespace UnityCliBridge.Handlers
             }
             
             bool pressed = !string.Equals(action, "release", StringComparison.OrdinalIgnoreCase);
-            gamepad.CopyState<GamepadState>(out var gamepadState);
+            var gamepadState = ReadSimulationState<GamepadState>(gamepad);
             if (TryParseGamepadButton(buttonName, out var gamepadButton))
             {
                 gamepadState = gamepadState.WithButton(gamepadButton, pressed);
@@ -1075,7 +1121,7 @@ namespace UnityCliBridge.Handlers
             Vector2 desired = new Vector2(x, y);
             Vector2 raw = ApplyAxisDeadzoneInverse(desired);
 
-            gamepad.CopyState<GamepadState>(out var state);
+            var state = ReadSimulationState<GamepadState>(gamepad);
             if (stick == "left")
             {
                 state.leftStick = raw;
@@ -1140,7 +1186,7 @@ namespace UnityCliBridge.Handlers
             
             value = Mathf.Clamp01(value);
 
-            gamepad.CopyState<GamepadState>(out var gamepadState);
+            var gamepadState = ReadSimulationState<GamepadState>(gamepad);
             if (trigger == "left")
             {
                 gamepadState.leftTrigger = value;
@@ -1208,7 +1254,7 @@ namespace UnityCliBridge.Handlers
                     return new { error = $"Invalid direction: {direction}" };
             }
             
-            gamepad.CopyState<GamepadState>(out var gamepadState);
+            var gamepadState = ReadSimulationState<GamepadState>(gamepad);
             gamepadState = gamepadState
                 .WithButton(GamepadButton.DpadUp, false)
                 .WithButton(GamepadButton.DpadDown, false)
@@ -1727,8 +1773,6 @@ namespace UnityCliBridge.Handlers
                 {
                     try
                     {
-                        // Release callbacks also read device state before changing it.
-                        EnsureSimulationUpdateContext();
                         scheduledReleases[i].Callback?.Invoke();
                     }
                     catch (Exception e)
